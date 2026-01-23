@@ -46,8 +46,8 @@ export default function PoolsPage() {
             <button
               key={period}
               className={`px-4 py-2 rounded-lg text-sm ${period === 'Last 90d'
-                  ? 'bg-slate-700 text-white'
-                  : 'bg-slate-900 text-gray-400 hover:bg-slate-800'
+                ? 'bg-slate-700 text-white'
+                : 'bg-slate-900 text-gray-400 hover:bg-slate-800'
                 }`}
             >
               {period}
@@ -203,7 +203,7 @@ export default function PoolsPage() {
           </div>
         </div>
 
-        {/* Tethra Vaults Preview */}
+        {/* Dash Vaults Preview */}
         <div className="bg-gradient-to-br from-blue-900/20 to-purple-900/20 rounded-lg border border-blue-500/30 p-6">
           <div className="flex items-center gap-2 mb-4">
             <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-500 rounded-lg flex items-center justify-center">

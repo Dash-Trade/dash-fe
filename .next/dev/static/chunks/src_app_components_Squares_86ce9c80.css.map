@@ -1,6 +1,0 @@
-{
-  "version": 3,
-  "sources": [],
-  "sections": [
-    {"offset": {"line": 1, "column": 0}, "map": {"version":3,"sources":["file:///home/naufalfzml/Projects/Hackathon/dash-baseindo/dash-fe/src/app/components/Squares.css"],"sourcesContent":[".squares-canvas {\n  width: 100%;\n  height: 100%;\n  border: none;\n  display: block;\n}\n"],"names":[],"mappings":"AAAA"}}]
-}

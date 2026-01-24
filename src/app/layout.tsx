@@ -32,7 +32,7 @@ export async function generateMetadata(): Promise<Metadata> {
     description: "Dash turns decisions into instant execution.",
     openGraph: {
       title: 'Dash Trade',
-      description: 'Decentralized Exchange with Advanced Trading Features',
+      description: 'Dash turns decisions into instant execution',
       url: 'https://dash-trading.vercel.app',
       siteName: 'Dash',
       images: [

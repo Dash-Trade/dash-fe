@@ -26,31 +26,28 @@ const cinzelDecorative = localFont({
   display: 'swap',
 });
 
-export const metadata: Metadata = {
-};
-
 export async function generateMetadata(): Promise<Metadata> {
   return {
-      title: "Dash",
-      description:"Dash turns decisions into instant execution.",
-      other: {
+    title: "Dash",
+    description: "Dash turns decisions into instant execution.",
+    other: {
       'fc:miniapp': JSON.stringify({
-          version: 'next',
-          imageUrl: 'https://your-app.com/embed-image',
-          button: {
-              title: `Launch Dash`,
-              action: {
-                  type: 'launch_miniapp',
-                  name: 'Dash',
-                  url: 'https://dash-trading.vercel.app/',
-                  splashImageUrl: 'https://dash-trading.vercel.app/og-banner.png',
-                  splashBackgroundColor: '#000000',
-              },
+        version: 'next',
+        imageUrl: 'https://dash-trading.vercel.app/og-banner.png',
+        button: {
+          title: `Launch Dash`,
+          action: {
+            type: 'launch_miniapp',
+            name: 'Dash',
+            url: 'https://dash-trading.vercel.app/',
+            splashImageUrl: 'https://dash-trading.vercel.app/og-banner.png',
+            splashBackgroundColor: '#000000',
           },
+        },
       }),
-      },
+    },
   };
-  }
+}
 
 export const viewport: Viewport = {
   width: 'device-width',

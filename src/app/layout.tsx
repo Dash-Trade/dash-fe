@@ -65,22 +65,17 @@ export async function generateMetadata(): Promise<Metadata> {
           },
         },
       }),
-      'fc:frame': 'vNext',
-      'fc:frame:image': `${miniapp.homeUrl}/api/frame/image?view=main`,
-      'fc:frame:image:aspect_ratio': '1.91:1',
-      'fc:frame:post_url': `${miniapp.homeUrl}/api/frame`,
-      'fc:frame:button:1': '📊 Chart',
-      'fc:frame:button:1:action': 'post',
-      'fc:frame:button:1:target': `${miniapp.homeUrl}/api/frame?action=chart`,
-      'fc:frame:button:2': '🔗 Connect',
-      'fc:frame:button:2:action': 'post',
-      'fc:frame:button:2:target': `${miniapp.homeUrl}/api/frame?action=connect`,
-      'fc:frame:button:3': '💰 Claim USDC',
-      'fc:frame:button:3:action': 'post',
-      'fc:frame:button:3:target': `${miniapp.homeUrl}/api/frame?action=claim`,
-      'fc:frame:button:4': '🪙 Coins',
-      'fc:frame:button:4:action': 'post',
-      'fc:frame:button:4:target': `${miniapp.homeUrl}/api/frame?action=coins`,
+      'fc:frame': JSON.stringify({
+        version: miniapp.version,
+        imageUrl: miniapp.heroImageUrl,
+        button: {
+          title: `Launch ${miniapp.name}`,
+          action: {
+            name: `Launch ${miniapp.name}`,
+            type: "launch_frame",
+          },
+        },
+      })
     },
   };
 }

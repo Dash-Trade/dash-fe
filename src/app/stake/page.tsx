@@ -56,6 +56,7 @@ export default function StakePage() {
   const { wallets } = useWallets();
   const poolData = usePoolData();
 
+  const [rewardToken, setRewardToken] = useState<'USDC' | 'IDRX'>('USDC');
   const [totalSupply, setTotalSupply] = useState<bigint>(BigInt(0));
   const [totalStaked, setTotalStaked] = useState<bigint>(BigInt(0));
   const [userBalance, setUserBalance] = useState<bigint>(BigInt(0));
@@ -138,6 +139,15 @@ export default function StakePage() {
   // Calculate percentage of total
   const percentOfTotal =
     totalStaked > BigInt(0) ? (Number(userStaked) / Number(totalStaked)) * 100 : 0;
+
+  const displayedRewards =
+    rewardToken === 'USDC'
+      ? Number(formatUnits(pendingRewards, 6)).toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })
+      : '0.00';
+  const canClaim = rewardToken === 'USDC' && pendingRewards > BigInt(0);
 
   return (
     <PageLayout
@@ -260,9 +270,16 @@ export default function StakePage() {
 
         {/* Token Tabs */}
         <div className="flex gap-4 mb-6 overflow-x-auto">
-          <button className="px-4 py-2 rounded-lg bg-slate-800/50 text-white font-medium border border-slate-700 hover:bg-slate-700/50 transition-colors whitespace-nowrap flex items-center gap-2">
+          <button
+            onClick={() => setRewardToken('USDC')}
+            className={`px-4 py-2 rounded-lg font-medium border transition-colors whitespace-nowrap flex items-center gap-2 ${
+              rewardToken === 'USDC'
+                ? 'bg-slate-800/50 text-white border-slate-700'
+                : 'bg-transparent text-gray-400 border-slate-800 hover:text-white'
+            }`}
+          >
             <Image
-              src="https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png"
+              src="/icons/usdc.png"
               alt="USDC"
               width={20}
               height={20}
@@ -270,23 +287,36 @@ export default function StakePage() {
             />
             USDC
           </button>
-          {/* <button className="px-4 py-2 rounded-lg text-gray-400 hover:text-white transition-colors whitespace-nowrap">
-            Total
-          </button> */}
+          <button
+            onClick={() => setRewardToken('IDRX')}
+            className={`px-4 py-2 rounded-lg font-medium border transition-colors whitespace-nowrap flex items-center gap-2 ${
+              rewardToken === 'IDRX'
+                ? 'bg-slate-800/50 text-white border-slate-700'
+                : 'bg-transparent text-gray-400 border-slate-800 hover:text-white'
+            }`}
+          >
+            <Image
+              src="/icons/idrx.png"
+              alt="IDRX"
+              width={20}
+              height={20}
+              className="rounded-full"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+              }}
+            />
+            IDRX
+          </button>
         </div>
 
         {/* Earnings Display or Empty State */}
-        {pendingRewards > BigInt(0) ? (
+        {canClaim ? (
           <div className="bg-slate-900/30 rounded-lg border border-slate-800 p-8">
             <div className="flex items-center justify-between mb-6">
               <div>
                 <p className="text-gray-400 text-sm mb-1">Total Earnings</p>
                 <h3 className="text-3xl font-bold text-white">
-                  {Number(formatUnits(pendingRewards, 6)).toLocaleString(undefined, {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}{' '}
-                  USDC
+                  {displayedRewards} {rewardToken}
                 </h3>
               </div>
               <button className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors">
@@ -332,7 +362,11 @@ export default function StakePage() {
                 </svg>
               </div>
               <h3 className="text-xl font-semibold text-white mb-2">No earnings to collect</h3>
-              <p className="text-gray-400">Stake DASH to start earning rewards.</p>
+              <p className="text-gray-400">
+                {rewardToken === 'USDC'
+                  ? 'Stake DASH to start earning rewards.'
+                  : 'IDRX rewards will appear here when available.'}
+              </p>
             </div>
           </div>
         )}

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useEmbeddedWallet } from '@/features/wallet/hooks/useEmbeddedWallet';
 import { useTapToTrade } from '@/features/trading/contexts/TapToTradeContext';
+import { useMarket } from '@/features/trading/contexts/MarketContext';
 
 const BACKEND_API_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
@@ -18,6 +19,7 @@ export interface TapToTradeOrder {
   endTime: number;
   nonce: string;
   signature: string;
+  collateralToken?: string;
   status: 'PENDING' | 'EXECUTING' | 'EXECUTED' | 'CANCELLED' | 'EXPIRED' | 'FAILED';
   createdAt: number;
   updatedAt: number;
@@ -26,12 +28,18 @@ export interface TapToTradeOrder {
   failureReason?: string;
 }
 
-export function useTapToTradeOrders() {
+type TapToTradeOrdersOptions = {
+  includeAllTokens?: boolean;
+};
+
+export function useTapToTradeOrders(options?: TapToTradeOrdersOptions) {
   const { address } = useEmbeddedWallet();
   const { gridSession } = useTapToTrade();
+  const { collateralToken } = useMarket();
   const [orders, setOrders] = useState<TapToTradeOrder[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [cancellingOrders, setCancellingOrders] = useState<Set<string>>(new Set());
+  const includeAllTokens = options?.includeAllTokens ?? false;
 
   // Fetch orders
   const fetchOrders = async () => {
@@ -43,7 +51,21 @@ export function useTapToTradeOrders() {
       const result = await response.json();
 
       if (result.success) {
-        setOrders(result.data);
+        const nextOrders = result.data?.map((order: TapToTradeOrder) => {
+          if (!order?.collateralToken) {
+            return { ...order, collateralToken };
+          }
+          return order;
+        });
+        if (includeAllTokens) {
+          setOrders(nextOrders || []);
+        } else {
+          const filtered = nextOrders?.filter((order: TapToTradeOrder) => {
+            if (!order?.collateralToken) return true;
+            return order.collateralToken === collateralToken;
+          });
+          setOrders(filtered || []);
+        }
       }
     } catch (error) {
       console.error('Failed to fetch tap-to-trade orders:', error);
@@ -57,7 +79,7 @@ export function useTapToTradeOrders() {
     fetchOrders();
     const interval = setInterval(fetchOrders, 5000);
     return () => clearInterval(interval);
-  }, [address]);
+  }, [address, collateralToken, includeAllTokens]);
 
   // Cancel single order
   const cancelOrder = async (orderId: string) => {

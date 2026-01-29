@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { BACKEND_API_URL } from '@/config/contracts';
+import { BACKEND_API_URL, CollateralToken } from '@/config/contracts';
 import { toast } from 'sonner';
 
 export interface TPSLConfig {
@@ -19,6 +19,7 @@ export interface TPSLSetRequest {
   trader: string;
   takeProfit?: string;
   stopLoss?: string;
+  collateralToken?: CollateralToken;
 }
 
 /**
@@ -65,9 +66,13 @@ export function useTPSL() {
   /**
    * Get TP/SL config for a position
    */
-  const getTPSL = async (positionId: number): Promise<TPSLConfig | null> => {
+  const getTPSL = async (
+    positionId: number,
+    collateralToken?: CollateralToken,
+  ): Promise<TPSLConfig | null> => {
     try {
-      const response = await fetch(`${BACKEND_API_URL}/api/tpsl/${positionId}`);
+      const query = collateralToken ? `?collateralToken=${collateralToken}` : '';
+      const response = await fetch(`${BACKEND_API_URL}/api/tpsl/${positionId}${query}`);
       const data = await response.json();
 
       if (!response.ok || !data.success) {
@@ -84,7 +89,11 @@ export function useTPSL() {
   /**
    * Delete TP/SL config for a position
    */
-  const deleteTPSL = async (positionId: number, trader: string): Promise<boolean> => {
+  const deleteTPSL = async (
+    positionId: number,
+    trader: string,
+    collateralToken?: CollateralToken,
+  ): Promise<boolean> => {
     setIsPending(true);
     setError(null);
 
@@ -94,7 +103,7 @@ export function useTPSL() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ trader }),
+        body: JSON.stringify({ trader, collateralToken }),
       });
 
       const data = await response.json();

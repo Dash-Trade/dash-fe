@@ -131,6 +131,13 @@ export const ALL_MARKETS: Market[] = [
     category: 'forex',
     maxLeverage: 100,
   },
+  {
+    symbol: 'USDIDR',
+    tradingViewSymbol: 'PYTH:USDIDR',
+    logoUrl: letterLogo('IDR', '#FDE68A', '#0B0F1A'),
+    category: 'forex',
+    maxLeverage: 100,
+  },
   // Commodities
   {
     symbol: 'XAUUSD',

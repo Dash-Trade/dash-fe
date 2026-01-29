@@ -15,8 +15,12 @@ import {
 } from '@/components/ui/table';
 
 export default function HistoryTab() {
-  const { orders: tapOrders, isLoading: isLoadingTap } = useTapToTradeOrders();
-  const { orders: binaryOrders, isLoading: isLoadingBinary } = useBinaryOrders();
+  const { orders: tapOrders, isLoading: isLoadingTap } = useTapToTradeOrders({
+    includeAllTokens: true,
+  });
+  const { orders: binaryOrders, isLoading: isLoadingBinary } = useBinaryOrders({
+    collateralToken: 'ALL',
+  });
 
   const [filter, setFilter] = useState<'ALL' | 'TAP' | 'BINARY'>('ALL');
 
@@ -99,7 +103,8 @@ export default function HistoryTab() {
             <TableRow className="border-b border-gray-800 hover:bg-transparent">
               <TableHead className="font-medium">Type</TableHead>
               <TableHead className="font-medium">Symbol</TableHead>
-              <TableHead className="text-right font-medium">Bet Margin</TableHead>
+              <TableHead className="text-right font-medium">Bet / Margin</TableHead>
+              <TableHead className="text-right font-medium">Collateral</TableHead>
               <TableHead className="text-right font-medium">Result (Win)</TableHead>
               <TableHead className="text-right font-medium">Status</TableHead>
               <TableHead className="text-right font-medium">Time</TableHead>
@@ -109,6 +114,7 @@ export default function HistoryTab() {
             {filteredHistory.map((item: any) => {
               const isTap = item.type === 'TAP';
               const date = new Date(item.time * 1000);
+              const collateral = item.collateralToken || 'USDC';
 
               let resultDisplay = '-';
               let statusColor = 'text-gray-400';
@@ -132,7 +138,7 @@ export default function HistoryTab() {
                   amount = Number(item.collateral) / 1000000;
                 else if (typeof item.collateral === 'number') amount = item.collateral / 1000000;
 
-                betMarginDisplay = `$${amount.toFixed(2)}`;
+                betMarginDisplay = `${amount.toFixed(2)} ${collateral}`;
 
                 // Tap: Show Tx Link or -
                 if (item.status === 'EXECUTED' && item.executedTxHash) {
@@ -144,7 +150,7 @@ export default function HistoryTab() {
                 if (typeof item.betAmount === 'string') amount = parseFloat(item.betAmount);
                 else if (typeof item.betAmount === 'number') amount = item.betAmount;
 
-                betMarginDisplay = `$${amount.toFixed(2)}`;
+                betMarginDisplay = `${amount.toFixed(2)} ${collateral}`;
 
                 // Binary: Show Profit (Multiplier)
                 const entry = parseFloat(item.entryPrice) / 100000000;
@@ -157,9 +163,9 @@ export default function HistoryTab() {
                   // Payout = Amount * (Mult/100)
                   const payout = amount * (mult / 100);
                   const profit = payout - amount;
-                  resultDisplay = `+$${profit.toFixed(2)} (${multDisplay}x)`;
+                  resultDisplay = `+${profit.toFixed(2)} ${collateral} (${multDisplay}x)`;
                 } else if (item.status === 'LOST') {
-                  resultDisplay = `-$${amount.toFixed(2)} (-1.00x)`;
+                  resultDisplay = `-${amount.toFixed(2)} ${collateral} (-1.00x)`;
                 }
               }
 
@@ -197,6 +203,10 @@ export default function HistoryTab() {
                   {/* Bet Margin */}
                   <TableCell className="text-right font-mono text-white">
                     {betMarginDisplay}
+                  </TableCell>
+
+                  <TableCell className="text-right text-gray-400 font-medium">
+                    {collateral}
                   </TableCell>
 
                   {/* Result */}

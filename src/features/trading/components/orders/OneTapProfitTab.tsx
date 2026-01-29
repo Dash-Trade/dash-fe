@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/table';
 
 export default function OneTapProfitTab() {
-  const { orders, isLoading } = useBinaryOrders();
+  const { orders, isLoading } = useBinaryOrders({ collateralToken: 'ALL' });
 
   // Filter for ACTIVE orders only
   const activeOrders = orders.filter((o) => o.status === 'ACTIVE');
@@ -48,6 +48,7 @@ export default function OneTapProfitTab() {
             <TableRow className="border-b border-gray-800 hover:bg-transparent">
               <TableHead className="font-medium">MARKET</TableHead>
               <TableHead className="text-right font-medium">BET AMOUNT</TableHead>
+              <TableHead className="text-right font-medium">COLLATERAL</TableHead>
               <TableHead className="text-right font-medium">MULTIPLIER</TableHead>
               <TableHead className="text-right font-medium">STATUS</TableHead>
               <TableHead className="text-right font-medium">EXPIRES</TableHead>
@@ -55,6 +56,8 @@ export default function OneTapProfitTab() {
           </TableHeader>
           <TableBody>
             {activeOrders.map((order) => {
+              const collateral = order.collateralToken || 'USDC';
+
               // Parse bet amount
               let betAmount = 0;
               if (typeof order.betAmount === 'string') {
@@ -104,8 +107,13 @@ export default function OneTapProfitTab() {
                   {/* Bet Amount */}
                   <TableCell className="text-right">
                     <span className="text-white font-medium">
-                      ${betAmount > 0 ? betAmount.toFixed(2) : '0.00'}
+                      {betAmount > 0 ? betAmount.toFixed(2) : '0.00'}
                     </span>
+                  </TableCell>
+
+                  {/* Collateral */}
+                  <TableCell className="text-right">
+                    <span className="text-gray-400 font-medium">{collateral}</span>
                   </TableCell>
 
                   {/* Multiplier */}

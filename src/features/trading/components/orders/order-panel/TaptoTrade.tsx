@@ -1,15 +1,17 @@
 'use client';
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { Info } from 'lucide-react';
 import { useMarket } from '@/features/trading/contexts/MarketContext';
 import { useTapToTrade } from '@/features/trading/contexts/TapToTradeContext';
-import { useUSDCBalance } from '@/hooks/data/useUSDCBalance';
-import { useTapToTradeApproval } from '@/features/wallet/hooks/useTapToTradeApproval';
-import { useOneTapProfitApproval } from '@/features/wallet/hooks/useOneTapProfitApproval';
-import { useSessionKey } from '@/features/wallet/hooks/useSessionKey';
-import { useWallets } from '@privy-io/react-auth';
-import { parseUnits } from 'viem';
 import { toast } from 'sonner';
+import { useTokenBalance } from '@/hooks/data/useTokenBalance';
+import {
+  COLLATERAL_CONFIG,
+  COLLATERAL_TOKENS,
+  CollateralToken,
+} from '@/config/contracts';
+import { useGlobalTradingActivation } from '@/features/wallet/hooks/useGlobalTradingActivation';
+import { useActivePrivyWallet } from '@/features/wallet/hooks/useActivePrivyWallet';
 
 // Import Shared Components
 import { MarketSelector, Market } from './components/MarketSelector';
@@ -27,23 +29,33 @@ interface TapToTradeProps {
 }
 
 const TapToTrade: React.FC<TapToTradeProps> = ({ onMobileClose }) => {
-  const { activeMarket, setActiveMarket, timeframe, setTimeframe, currentPrice } = useMarket();
-  const { usdcBalance, isLoadingBalance } = useUSDCBalance();
-  const { wallets } = useWallets();
+  const {
+    activeMarket,
+    setActiveMarket,
+    timeframe,
+    setTimeframe,
+    currentPrice,
+    collateralToken,
+    setCollateralToken,
+  } = useMarket();
+  const collateralConfig = COLLATERAL_CONFIG[collateralToken as CollateralToken];
+  const { balance, isLoadingBalance } = useTokenBalance(
+    collateralConfig.address,
+    collateralConfig.decimals,
+  );
+  const { activeWallet } = useActivePrivyWallet();
   const [leverage, setLeverage] = useState(10);
   const [marginAmount, setMarginAmount] = useState<string>('');
   const [isMarketSelectorOpen, setIsMarketSelectorOpen] = useState(false);
   const [hasSelectedYGrid, setHasSelectedYGrid] = useState(false); // Track if user explicitly selected Y grid
 
-  // Approval hook for USDC (TapToTradeExecutor-specific)
-  const { approve: approveUSDC, allowance, isPending: isApprovalPending } = useTapToTradeApproval();
-
-  // Approval hook for USDC (OneTapProfit-specific)
   const {
-    approve: approveOneTapProfit,
-    allowance: oneTapProfitAllowance,
-    isPending: isOneTapProfitApprovalPending,
-  } = useOneTapProfitApproval();
+    approveAll,
+    hasGlobalAllowance,
+    isApproving: isApprovalPending,
+    maxApproval,
+    refetchAllowances,
+  } = useGlobalTradingActivation();
 
   // Tap to Trade dari Context
   const tapToTrade = useTapToTrade();
@@ -51,32 +63,31 @@ const TapToTrade: React.FC<TapToTradeProps> = ({ onMobileClose }) => {
   // Use trade mode from context
   const tradeMode = tapToTrade.tradeMode;
 
+  useEffect(() => {
+    refetchAllowances?.();
+  }, [refetchAllowances, tradeMode]);
+
   const leverageMarkers = [1, 2, 5, 10, 25, 50, 100]; // Updated to match MarketOrder
 
   // Check if we have large allowance (> $10,000) - memoized to prevent setState during render
   const hasLargeAllowance = useMemo(() => {
-    return Boolean(allowance && allowance > parseUnits('10000', 6));
-  }, [allowance]);
+    return hasGlobalAllowance(maxApproval);
+  }, [hasGlobalAllowance, maxApproval]);
 
-  // Check if OneTapProfit has large allowance
-  const hasLargeOneTapProfitAllowance = useMemo(() => {
-    return Boolean(oneTapProfitAllowance && oneTapProfitAllowance > parseUnits('10000', 6));
-  }, [oneTapProfitAllowance]);
+  const hasLargeOneTapProfitAllowance = hasLargeAllowance;
 
   // Handler for pre-approve USDC in large amount
   const handlePreApprove = async () => {
     try {
-      toast.loading('Approving unlimited USDC...', { id: 'pre-approve' });
-      // Approve 1 million USDC (enough for many trades)
-      const maxAmount = parseUnits('1000000', 6).toString();
-      await approveUSDC(maxAmount);
+      toast.loading('Approving collateral...', { id: 'pre-approve' });
+      await approveAll(maxApproval);
       toast.success('Pre-approved! You can now trade without approval popups', {
         id: 'pre-approve',
         duration: 5000,
       });
     } catch (error) {
       console.error('Pre-approve error:', error);
-      toast.error('Failed to approve USDC. Please try again.', {
+      toast.error('Failed to approve collateral. Please try again.', {
         id: 'pre-approve',
       });
     }
@@ -85,19 +96,17 @@ const TapToTrade: React.FC<TapToTradeProps> = ({ onMobileClose }) => {
   // Handler for pre-approve USDC for OneTapProfit
   const handlePreApproveOneTapProfit = async () => {
     try {
-      toast.loading('Approving unlimited USDC for Binary Trading...', {
+      toast.loading('Approving collateral for Binary Trading...', {
         id: 'binary-pre-approve',
       });
-      // Approve 1 million USDC (enough for many bets)
-      const maxAmount = parseUnits('1000000', 6).toString();
-      await approveOneTapProfit(maxAmount);
+      await approveAll(maxApproval);
       toast.success('Pre-approved! You can now enable Binary Trading', {
         id: 'binary-pre-approve',
         duration: 5000,
       });
     } catch (error) {
       console.error('OneTapProfit pre-approve error:', error);
-      toast.error('Failed to approve USDC. Please try again.', {
+      toast.error('Failed to approve collateral. Please try again.', {
         id: 'binary-pre-approve',
       });
     }
@@ -121,7 +130,7 @@ const TapToTrade: React.FC<TapToTradeProps> = ({ onMobileClose }) => {
   };
 
   const handleMaxClick = () => {
-    setMarginAmount(usdcBalance);
+    setMarginAmount(balance);
   };
 
   const marginUsdValue = marginAmount ? parseFloat(marginAmount) : 0;
@@ -172,15 +181,22 @@ const TapToTrade: React.FC<TapToTradeProps> = ({ onMobileClose }) => {
         disabled={tapToTrade.isEnabled && tradeMode === 'open-position'}
       />
 
-      {/* Margin Input (USDC) */}
+      {/* Margin Input */}
       <CollateralInput
         value={marginAmount}
         onChange={handleMarginInputChange}
-        balance={usdcBalance}
+        balance={balance}
         isLoadingBalance={isLoadingBalance}
         onMaxClick={handleMaxClick}
         label={tradeMode === 'one-tap-profit' ? 'Bet Amount' : 'Margin'}
         disabled={tapToTrade.isEnabled}
+        tokenSymbol={collateralToken}
+        tokenIcon={collateralConfig.icon}
+        tokenOptions={COLLATERAL_TOKENS.map((token) => ({
+          symbol: token,
+          icon: COLLATERAL_CONFIG[token].icon,
+        }))}
+        onTokenChange={(token) => setCollateralToken(token as CollateralToken)}
       />
 
       {/* Leverage Input - Hidden for One Tap Profit */}
@@ -235,11 +251,11 @@ const TapToTrade: React.FC<TapToTradeProps> = ({ onMobileClose }) => {
         hasLargeAllowance={hasLargeAllowance}
         hasLargeOneTapProfitAllowance={hasLargeOneTapProfitAllowance}
         hasSelectedYGrid={hasSelectedYGrid}
-        wallets={wallets}
+        activeWallet={activeWallet}
         onPreApprove={handlePreApprove}
         onPreApproveOneTapProfit={handlePreApproveOneTapProfit}
         isApprovalPending={isApprovalPending}
-        isOneTapProfitApprovalPending={isOneTapProfitApprovalPending}
+        isOneTapProfitApprovalPending={isApprovalPending}
         disabled={
           tradeMode === 'one-tap-profit'
             ? !marginAmount || !activeMarket

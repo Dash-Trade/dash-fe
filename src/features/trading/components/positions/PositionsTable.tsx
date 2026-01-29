@@ -3,7 +3,6 @@
 import React, { useState } from 'react';
 import PositionRow from './PositionRow';
 import MobilePositionCard from './MobilePositionCard';
-import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
   Table,
@@ -23,20 +22,23 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { PositionRef } from '@/hooks/data/usePositions';
+import { CollateralToken } from '@/config/contracts';
 
 interface PositionsTableProps {
-  positionIds: bigint[];
+  positions: PositionRef[];
   isLoading: boolean;
   openPositionsCount: number;
   isClosing: boolean;
-  selectedPositionId?: bigint;
+  selectedPositionKey?: string;
   tpslRefreshTrigger: number;
-  onClosePosition: (positionId: bigint, symbol: string) => void;
+  onClosePosition: (positionId: bigint, symbol: string, collateralToken: CollateralToken) => void;
   onPositionClick: (
     positionId: bigint,
     symbol: string,
     entryPrice: number,
     isLong: boolean,
+    collateralToken: CollateralToken,
   ) => void;
   onTPSLClick: (
     positionId: bigint,
@@ -44,17 +46,23 @@ interface PositionsTableProps {
     symbol: string,
     entryPrice: number,
     isLong: boolean,
+    collateralToken: CollateralToken,
   ) => void;
-  onPositionLoaded: (positionId: bigint, isOpen: boolean, symbol: string) => void;
+  onPositionLoaded: (
+    positionId: bigint,
+    isOpen: boolean,
+    symbol: string,
+    collateralToken: CollateralToken,
+  ) => void;
   onCloseAll: () => void;
 }
 
 const PositionsTable = ({
-  positionIds,
+  positions,
   isLoading,
   openPositionsCount,
   isClosing,
-  selectedPositionId,
+  selectedPositionKey,
   tpslRefreshTrigger,
   onClosePosition,
   onPositionClick,
@@ -66,10 +74,16 @@ const PositionsTable = ({
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [actionType, setActionType] = useState<'single' | 'all'>('single');
   const [targetPosition, setTargetPosition] = useState<{ id: bigint; symbol: string } | null>(null);
+  const [targetToken, setTargetToken] = useState<CollateralToken>('USDC');
 
   // Handle "Close" click on a single position
-  const handleRequestClose = (positionId: bigint, symbol: string) => {
+  const handleRequestClose = (
+    positionId: bigint,
+    symbol: string,
+    collateralToken: CollateralToken,
+  ) => {
     setTargetPosition({ id: positionId, symbol });
+    setTargetToken(collateralToken);
     setActionType('single');
     setIsDialogOpen(true);
   };
@@ -85,7 +99,7 @@ const PositionsTable = ({
     if (actionType === 'all') {
       onCloseAll();
     } else if (targetPosition) {
-      onClosePosition(targetPosition.id, targetPosition.symbol);
+      onClosePosition(targetPosition.id, targetPosition.symbol, targetToken);
     }
     setIsDialogOpen(false);
   };
@@ -97,10 +111,6 @@ const PositionsTable = ({
         <span>Loading positions...</span>
       </div>
     );
-  }
-
-  if (positionIds.length === 0) {
-    return <div className="text-center py-16 text-gray-500">No open positions</div>;
   }
 
   return (
@@ -137,23 +147,43 @@ const PositionsTable = ({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {positionIds.map((positionId) => (
-              <PositionRow
-                key={`${positionId.toString()}-${tpslRefreshTrigger}`}
-                positionId={positionId}
-                onClose={handleRequestClose}
-                onPositionClick={onPositionClick}
-                onTPSLClick={onTPSLClick}
-                isSelected={selectedPositionId === positionId}
-                onPositionLoaded={onPositionLoaded}
-              />
-            ))}
+            {openPositionsCount === 0 && (
+              <TableRow className="border-b border-gray-800">
+                <TableCell colSpan={9} className="text-center py-16 text-gray-500">
+                  No open positions
+                </TableCell>
+              </TableRow>
+            )}
+            {positions.map((positionRef) => {
+              const key = `${positionRef.collateralToken}:${positionRef.id.toString()}`;
+              return (
+                <PositionRow
+                  key={`${key}-${tpslRefreshTrigger}`}
+                  positionId={positionRef.id}
+                  collateralToken={positionRef.collateralToken}
+                  onClose={(id, symbol) =>
+                    handleRequestClose(id, symbol, positionRef.collateralToken)
+                  }
+                  onPositionClick={(id, symbol, entryPrice, isLong) =>
+                    onPositionClick(id, symbol, entryPrice, isLong, positionRef.collateralToken)
+                  }
+                  onTPSLClick={(id, trader, symbol, entryPrice, isLong) =>
+                    onTPSLClick(id, trader, symbol, entryPrice, isLong, positionRef.collateralToken)
+                  }
+                  isSelected={selectedPositionKey === key}
+                  onPositionLoaded={onPositionLoaded}
+                />
+              );
+            })}
           </TableBody>
         </Table>
       </div>
 
       {/* Mobile View: Cards */}
       <div className="md:hidden space-y-4 flex-1 overflow-y-auto p-4">
+        {openPositionsCount === 0 && (
+          <div className="text-center py-8 text-gray-500">No open positions</div>
+        )}
         {openPositionsCount > 0 && (
           <Button
             variant="destructive"
@@ -165,16 +195,26 @@ const PositionsTable = ({
             Close All Positions
           </Button>
         )}
-        {positionIds.map((positionId) => (
+        {positions.map((positionRef) => {
+          const key = `${positionRef.collateralToken}:${positionRef.id.toString()}`;
+          return (
           <MobilePositionCard
-            key={`mobile-${positionId.toString()}-${tpslRefreshTrigger}`}
-            positionId={positionId}
-            onClose={handleRequestClose}
-            onPositionClick={onPositionClick}
-            onTPSLClick={onTPSLClick}
+            key={`mobile-${key}-${tpslRefreshTrigger}`}
+            positionId={positionRef.id}
+            collateralToken={positionRef.collateralToken}
+            onClose={(id, symbol) =>
+              handleRequestClose(id, symbol, positionRef.collateralToken)
+            }
+            onPositionClick={(id, symbol, entryPrice, isLong) =>
+              onPositionClick(id, symbol, entryPrice, isLong, positionRef.collateralToken)
+            }
+            onTPSLClick={(id, trader, symbol, entryPrice, isLong) =>
+              onTPSLClick(id, trader, symbol, entryPrice, isLong, positionRef.collateralToken)
+            }
             onPositionLoaded={onPositionLoaded}
           />
-        ))}
+          );
+        })}
       </div>
 
       {/* Confirmation Dialog */}

@@ -7,9 +7,11 @@ import { formatMarketPair } from '@/features/trading/lib/marketUtils';
 import { formatUnits } from 'viem';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { CollateralToken } from '@/config/contracts';
 
 interface MobilePositionCardProps {
   positionId: bigint;
+  collateralToken: CollateralToken;
   onClose: (positionId: bigint, symbol: string) => void;
   onPositionClick: (
     positionId: bigint,
@@ -24,17 +26,23 @@ interface MobilePositionCardProps {
     entryPrice: number,
     isLong: boolean,
   ) => void;
-  onPositionLoaded?: (positionId: bigint, isOpen: boolean, symbol: string) => void;
+  onPositionLoaded?: (
+    positionId: bigint,
+    isOpen: boolean,
+    symbol: string,
+    collateralToken: CollateralToken,
+  ) => void;
 }
 
 const MobilePositionCard = ({
   positionId,
+  collateralToken,
   onClose,
   onPositionClick,
   onTPSLClick,
   onPositionLoaded,
 }: MobilePositionCardProps) => {
-  const { position, isLoading } = usePosition(positionId);
+  const { position, isLoading } = usePosition(positionId, collateralToken);
   const { price: priceData, isLoading: loadingPrice } = usePrice(position?.symbol);
   const currentPrice = priceData?.price || null;
 
@@ -43,9 +51,9 @@ const MobilePositionCard = ({
 
   useEffect(() => {
     if (!isLoading && position && onPositionLoaded) {
-      onPositionLoaded(positionId, position.status === 0, position.symbol);
+      onPositionLoaded(positionId, position.status === 0, position.symbol, collateralToken);
     }
-  }, [isLoading, position, positionId, onPositionLoaded]);
+  }, [isLoading, position, positionId, collateralToken, onPositionLoaded]);
 
   if (isLoading || !position || position.status !== 0) {
     return null;
@@ -72,6 +80,15 @@ const MobilePositionCard = ({
     : entryPrice * (1 + liqPriceRatio);
 
   const pnlColor = unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400';
+  const isIdrMarket = position.symbol.toUpperCase() === 'USDIDR';
+  const formatQuotePrice = (value: number) => {
+    if (!Number.isFinite(value)) return isIdrMarket ? 'Rp --' : '$--';
+    const formatted = value.toLocaleString(isIdrMarket ? 'id-ID' : undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return isIdrMarket ? `Rp ${formatted}` : `$${formatted}`;
+  };
 
   const getMarketLogo = (symbol: string) => {
     const market = ALL_MARKETS.find((m) => m.symbol === symbol);
@@ -112,7 +129,7 @@ const MobilePositionCard = ({
         <div className="text-right">
           <div className={`text-lg font-bold ${pnlColor}`}>
             {unrealizedPnl >= 0 ? '+' : ''}
-            {unrealizedPnl.toFixed(2)}
+            {unrealizedPnl.toFixed(2)} {collateralToken}
           </div>
           <div className={`text-xs font-medium ${pnlColor}`}>
             ({pnlPercentage >= 0 ? '+' : ''}
@@ -125,23 +142,27 @@ const MobilePositionCard = ({
       <div className="grid grid-cols-2 gap-y-3 gap-x-4 text-xs">
         <div className="flex justify-between">
           <span className="text-gray-500">Size</span>
-          <span className="text-white font-medium">${size.toFixed(2)}</span>
+          <span className="text-white font-medium">
+            {size.toFixed(2)} {collateralToken}
+          </span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Margin</span>
-          <span className="text-white font-medium">${collateral.toFixed(2)}</span>
+          <span className="text-white font-medium">
+            {collateral.toFixed(2)} {collateralToken}
+          </span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Entry Price</span>
-          <span className="text-white font-medium">${entryPrice.toLocaleString()}</span>
+          <span className="text-white font-medium">{formatQuotePrice(entryPrice)}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Mark Price</span>
-          <span className="text-white font-medium">${markPrice.toLocaleString()}</span>
+          <span className="text-white font-medium">{formatQuotePrice(markPrice)}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Liq. Price</span>
-          <span className="text-orange-400 font-medium">${liquidationPrice.toLocaleString()}</span>
+          <span className="text-orange-400 font-medium">{formatQuotePrice(liquidationPrice)}</span>
         </div>
       </div>
 
@@ -150,12 +171,12 @@ const MobilePositionCard = ({
         <div className="flex gap-4 text-xs pt-2 border-t border-gray-800/50">
           {tpslConfig.takeProfit && (
             <span className="text-emerald-400">
-              TP: ${(Number(tpslConfig.takeProfit) / 1e8).toFixed(2)}
+              TP: {formatQuotePrice(Number(tpslConfig.takeProfit) / 1e8)}
             </span>
           )}
           {tpslConfig.stopLoss && (
             <span className="text-red-400">
-              SL: ${(Number(tpslConfig.stopLoss) / 1e8).toFixed(2)}
+              SL: {formatQuotePrice(Number(tpslConfig.stopLoss) / 1e8)}
             </span>
           )}
         </div>

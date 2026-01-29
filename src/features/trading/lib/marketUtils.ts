@@ -15,6 +15,10 @@ const COMMODITY_LIKE = ['XAU', 'XAG', 'WTI', 'BRENT'];
 
 export function formatMarketPair(symbol: string): string {
   const upper = symbol.toUpperCase();
+  if (upper.startsWith('USD') && upper.length === 6) {
+    const quote = upper.slice(3);
+    return `USD/${quote}`;
+  }
   if (upper.endsWith('USD') && upper.length > 3) {
     const base = symbol.slice(0, -3);
     return `${base}/USD`;
@@ -26,6 +30,7 @@ export function inferMarketCategory(symbol: string): Market['category'] {
   const upper = symbol.toUpperCase();
   const base = upper.endsWith('USD') ? upper.slice(0, -3) : upper;
 
+  if (upper.startsWith('USD') && upper.length === 6) return 'forex';
   if (FOREX_BASES.includes(base) && upper.endsWith('USD')) return 'forex';
   if (COMMODITY_LIKE.includes(base)) return 'commodities';
   if (INDEX_LIKE.includes(base)) return 'indices';

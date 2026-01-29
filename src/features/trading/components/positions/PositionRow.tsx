@@ -10,9 +10,11 @@ import { formatUnits } from 'viem';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { TableRow, TableCell } from '@/components/ui/table';
+import { CollateralToken } from '@/config/contracts';
 
 interface PositionRowProps {
   positionId: bigint;
+  collateralToken: CollateralToken;
   onClose: (positionId: bigint, symbol: string) => void;
   onPositionClick: (
     positionId: bigint,
@@ -28,18 +30,24 @@ interface PositionRowProps {
     isLong: boolean,
   ) => void;
   isSelected: boolean;
-  onPositionLoaded?: (positionId: bigint, isOpen: boolean, symbol: string) => void;
+  onPositionLoaded?: (
+    positionId: bigint,
+    isOpen: boolean,
+    symbol: string,
+    collateralToken: CollateralToken,
+  ) => void;
 }
 
 const PositionRow = ({
   positionId,
+  collateralToken,
   onClose,
   onPositionClick,
   onTPSLClick,
   isSelected,
   onPositionLoaded,
 }: PositionRowProps) => {
-  const { position, isLoading } = usePosition(positionId);
+  const { position, isLoading } = usePosition(positionId, collateralToken);
 
   // Use shared price hook
   const { price: priceData, isLoading: loadingPrice } = usePrice(position?.symbol);
@@ -52,9 +60,9 @@ const PositionRow = ({
   // Report position status
   useEffect(() => {
     if (!isLoading && position && onPositionLoaded) {
-      onPositionLoaded(positionId, position.status === 0, position.symbol);
+      onPositionLoaded(positionId, position.status === 0, position.symbol, collateralToken);
     }
-  }, [isLoading, position, positionId, onPositionLoaded]);
+  }, [isLoading, position, positionId, collateralToken, onPositionLoaded]);
 
   if (isLoading) {
     return (
@@ -93,6 +101,15 @@ const PositionRow = ({
     : entryPrice * (1 + liqPriceRatio);
 
   const pnlColor = unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400';
+  const isIdrMarket = position.symbol.toUpperCase() === 'USDIDR';
+  const formatQuotePrice = (value: number) => {
+    if (!Number.isFinite(value)) return isIdrMarket ? 'Rp --' : '$--';
+    const formatted = value.toLocaleString(isIdrMarket ? 'id-ID' : undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return isIdrMarket ? `Rp ${formatted}` : `$${formatted}`;
+  };
 
   // Get crypto logo
   const getMarketLogo = (symbol: string) => {
@@ -150,14 +167,16 @@ const PositionRow = ({
       </TableCell>
 
       {/* Size */}
-      <TableCell className="text-right text-white font-medium">${size.toFixed(2)}</TableCell>
+      <TableCell className="text-right text-white font-medium">
+        {size.toFixed(2)} {collateralToken}
+      </TableCell>
 
       {/* PnL (ROE%) */}
       <TableCell className="text-right">
         <div className="flex flex-col items-end gap-0.5">
           <span className={cn('font-bold', pnlColor)}>
             {unrealizedPnl >= 0 ? '+' : ''}
-            {unrealizedPnl.toFixed(2)}
+            {unrealizedPnl.toFixed(2)} {collateralToken}
           </span>
           <span className={cn('text-xs font-medium', pnlColor)}>
             {pnlPercentage >= 0 ? '+' : ''}
@@ -167,15 +186,13 @@ const PositionRow = ({
       </TableCell>
 
       {/* Collateral */}
-      <TableCell className="text-right text-white font-medium">${collateral.toFixed(2)}</TableCell>
+      <TableCell className="text-right text-white font-medium">
+        {collateral.toFixed(2)} {collateralToken}
+      </TableCell>
 
       {/* Entry Price */}
       <TableCell className="text-right text-white font-mono">
-        $
-        {entryPrice.toLocaleString(undefined, {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        })}
+        {formatQuotePrice(entryPrice)}
       </TableCell>
 
       {/* Mark Price */}
@@ -183,17 +200,13 @@ const PositionRow = ({
         {loadingPrice ? (
           <span className="text-slate-600">...</span>
         ) : (
-          `$${markPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          formatQuotePrice(markPrice)
         )}
       </TableCell>
 
       {/* Liq. Price */}
       <TableCell className="text-right text-orange-400 font-mono">
-        $
-        {liquidationPrice.toLocaleString(undefined, {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        })}
+        {formatQuotePrice(liquidationPrice)}
       </TableCell>
 
       {/* TP / SL (Values) */}
@@ -202,12 +215,12 @@ const PositionRow = ({
           <div className="flex flex-col items-end gap-1 text-xs font-medium">
             {tpslConfig.takeProfit && (
               <span className="text-emerald-400/90">
-                TP: ${(Number(tpslConfig.takeProfit) / 1e8).toFixed(2)}
+                TP: {formatQuotePrice(Number(tpslConfig.takeProfit) / 1e8)}
               </span>
             )}
             {tpslConfig.stopLoss && (
               <span className="text-red-400/90">
-                SL: ${(Number(tpslConfig.stopLoss) / 1e8).toFixed(2)}
+                SL: {formatQuotePrice(Number(tpslConfig.stopLoss) / 1e8)}
               </span>
             )}
           </div>

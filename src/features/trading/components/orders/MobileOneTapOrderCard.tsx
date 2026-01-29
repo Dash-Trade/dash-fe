@@ -16,6 +16,8 @@ const MobileOneTapOrderCard = ({ order }: MobileOneTapOrderCardProps) => {
     );
   };
 
+  const collateral = order.collateralToken || 'USDC';
+
   // Parse bet amount
   let betAmount = 0;
   if (typeof order.betAmount === 'string') {
@@ -68,7 +70,13 @@ const MobileOneTapOrderCard = ({ order }: MobileOneTapOrderCardProps) => {
       <div className="grid grid-cols-2 gap-4 text-xs border-t border-gray-800 pt-3">
         <div className="flex justify-between">
           <span className="text-gray-500">Bet Amount</span>
-          <span className="text-white font-medium">${betAmount.toFixed(2)}</span>
+          <span className="text-white font-medium">
+            {betAmount.toFixed(2)} {collateral}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-500">Collateral</span>
+          <span className="text-white font-medium">{collateral}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Target Time</span>

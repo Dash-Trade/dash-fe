@@ -16,7 +16,7 @@ interface TradeActionButtonsProps {
   hasLargeAllowance: boolean;
   hasLargeOneTapProfitAllowance: boolean;
   hasSelectedYGrid: boolean;
-  wallets: ConnectedWallet[];
+  activeWallet?: ConnectedWallet;
 
   onPreApprove: () => Promise<void>;
   onPreApproveOneTapProfit: () => Promise<void>;
@@ -37,7 +37,7 @@ export const TradeActionButtons: React.FC<TradeActionButtonsProps> = ({
   hasLargeAllowance,
   hasLargeOneTapProfitAllowance,
   hasSelectedYGrid,
-  wallets,
+  activeWallet,
 
   onPreApprove,
   onPreApproveOneTapProfit,
@@ -74,43 +74,65 @@ export const TradeActionButtons: React.FC<TradeActionButtonsProps> = ({
         currentPrice: Number(currentPrice) || 0,
       });
       onMobileClose?.();
-    } else {
-      // Binary Trading Logic
+  } else {
+    // Binary Trading Logic
+    try {
+      toast.loading('Creating session key...', {
+        id: 'binary-session',
+      });
+
+      if (!activeWallet) {
+        throw new Error('Privy wallet not found');
+      }
+
+      const walletClient = await activeWallet.getEthereumProvider();
+      if (!walletClient) throw new Error('Could not get wallet client');
+
+      let hasSession = false;
       try {
-        toast.loading('Creating session key...', {
-          id: 'binary-session',
-        });
-
-        const embeddedWallet = wallets.find((w) => w.walletClientType === 'privy');
-        if (!embeddedWallet) throw new Error('Privy wallet not found');
-
-        const walletClient = await embeddedWallet.getEthereumProvider();
-        if (!walletClient) throw new Error('Could not get wallet client');
-
         const newSession = await tapToTrade.createSession(
-          embeddedWallet.address,
+          activeWallet.address,
           walletClient,
           30 * 60 * 1000,
         );
-
-        if (!newSession) throw new Error('Session creation failed');
-
-        await tapToTrade.toggleMode({
-          symbol: activeMarket?.symbol || 'BTC',
-          margin: marginAmount,
-          leverage: 1,
-          timeframe: '1',
-          currentPrice: Number(currentPrice) || 0,
-        });
-
-        tapToTrade.setIsBinaryTradingEnabled(true);
-        toast.success('Binary Trading enabled!', { id: 'binary-session', duration: 5000 });
-        onMobileClose?.();
-      } catch (error) {
-        console.error('Failed to enable binary trading:', error);
-        toast.error('Failed to enable binary trading', { id: 'binary-session' });
+        hasSession = !!newSession;
+        if (!newSession) {
+          toast.error(
+            'Session key failed. You can still trade, but signatures will be required.',
+            { id: 'binary-session', duration: 5000 },
+          );
+        }
+      } catch (sessionErr: any) {
+        console.error('Session key creation failed:', sessionErr);
+        toast.error(
+          sessionErr?.message ||
+            'Session key failed. You can still trade, but signatures will be required.',
+          { id: 'binary-session', duration: 5000 },
+        );
       }
+
+      await tapToTrade.toggleMode({
+        symbol: activeMarket?.symbol || 'BTC',
+        margin: marginAmount,
+        leverage: 1,
+        timeframe: '1',
+        currentPrice: Number(currentPrice) || 0,
+      });
+
+      tapToTrade.setIsBinaryTradingEnabled(true);
+      toast.success(
+        hasSession ? 'Binary Trading enabled!' : 'Binary Trading enabled (manual signing)',
+        { id: 'binary-session', duration: 5000 },
+      );
+      onMobileClose?.();
+    } catch (error) {
+      console.error('Failed to enable binary trading:', error);
+      toast.error(
+        (error as Error)?.message || 'Failed to enable binary trading',
+        { id: 'binary-session' },
+      );
     }
+  }
   };
 
   const STOP_ACTION = async () => {
@@ -148,7 +170,7 @@ export const TradeActionButtons: React.FC<TradeActionButtonsProps> = ({
 
   if (tradeMode === 'open-position') {
     if (!hasLargeAllowance) {
-      buttonText = isApprovalPending ? 'Approving USDC...' : 'Enable One-Click Trading';
+      buttonText = isApprovalPending ? 'Approving Collateral...' : 'Activate Trading';
       isLoading = isApprovalPending;
       variant = 'default';
     } else {
@@ -157,7 +179,9 @@ export const TradeActionButtons: React.FC<TradeActionButtonsProps> = ({
     }
   } else {
     if (!hasLargeOneTapProfitAllowance) {
-      buttonText = isOneTapProfitApprovalPending ? 'Approving USDC...' : 'Enable One-Click Binary';
+      buttonText = isOneTapProfitApprovalPending
+        ? 'Approving Collateral...'
+        : 'Activate Trading';
       isLoading = isOneTapProfitApprovalPending;
     } else {
       buttonText = tapToTrade.isLoading ? 'Setting up session...' : 'Enable Binary Trade';

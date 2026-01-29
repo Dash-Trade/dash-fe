@@ -3,7 +3,7 @@
  */
 
 import { useReadContract } from 'wagmi';
-import { POSITION_MANAGER_ADDRESS } from '@/config/contracts';
+import { CollateralToken, getCollateralConfig, isZeroAddress } from '@/config/contracts';
 import PositionManagerABI from '@/contracts/abis/PositionManager.json';
 import { useEmbeddedWallet } from '@/features/wallet/hooks/useEmbeddedWallet';
 
@@ -20,23 +20,29 @@ export interface Position {
   status: number; // 0 = OPEN, 1 = CLOSED, 2 = LIQUIDATED
 }
 
+export interface PositionRef {
+  id: bigint;
+  collateralToken: CollateralToken;
+}
+
 /**
  * Hook to get all user positions
  */
-export function useUserPositions() {
+export function useUserPositions(token: CollateralToken = 'USDC') {
   const { address } = useEmbeddedWallet();
+  const collateralConfig = getCollateralConfig(token);
 
   const {
     data: positionIds,
     isLoading: isLoadingIds,
     refetch: refetchIds,
   } = useReadContract({
-    address: POSITION_MANAGER_ADDRESS,
+    address: collateralConfig.positionManager,
     abi: PositionManagerABI,
     functionName: 'getUserPositions',
     args: address ? [address] : undefined,
     query: {
-      enabled: !!address,
+      enabled: !!address && !isZeroAddress(collateralConfig.positionManager),
       refetchInterval: 5000, // Refetch every 5 seconds
     },
   });
@@ -49,16 +55,40 @@ export function useUserPositions() {
 }
 
 /**
+ * Hook to get all user positions across all collateral tokens
+ */
+export function useAllUserPositions() {
+  const usdc = useUserPositions('USDC');
+  const idrx = useUserPositions('IDRX');
+
+  const positionRefs: PositionRef[] = [
+    ...(usdc.positionIds || []).map((id) => ({ id, collateralToken: 'USDC' as const })),
+    ...(idrx.positionIds || []).map((id) => ({ id, collateralToken: 'IDRX' as const })),
+  ];
+
+  return {
+    positionRefs,
+    isLoading: usdc.isLoading || idrx.isLoading,
+    refetch: () => {
+      usdc.refetch?.();
+      idrx.refetch?.();
+    },
+  };
+}
+
+/**
  * Hook to get single position details
  */
-export function usePosition(positionId: bigint | undefined) {
+export function usePosition(positionId: bigint | undefined, token: CollateralToken = 'USDC') {
+  const collateralConfig = getCollateralConfig(token);
   const { data, isLoading, refetch } = useReadContract({
-    address: POSITION_MANAGER_ADDRESS,
+    address: collateralConfig.positionManager,
     abi: PositionManagerABI,
     functionName: 'getPosition',
     args: positionId !== undefined ? [positionId] : undefined,
     query: {
-      enabled: positionId !== undefined,
+      enabled:
+        positionId !== undefined && !isZeroAddress(collateralConfig.positionManager),
       refetchInterval: 5000, // Refetch every 5 seconds
     },
   });
@@ -149,8 +179,8 @@ export function usePosition(positionId: bigint | undefined) {
  * Hook to get all user positions with full details
  * Fetches each position individually since batch function may not exist
  */
-export function useUserPositionsWithDetails() {
-  const { positionIds, isLoading: isLoadingIds, refetch: refetchIds } = useUserPositions();
+export function useUserPositionsWithDetails(token: CollateralToken = 'USDC') {
+  const { positionIds, isLoading: isLoadingIds, refetch: refetchIds } = useUserPositions(token);
 
   // For now, just use the position IDs and fetch them individually in the component
   // This is a simpler approach that doesn't require a batch function

@@ -10,11 +10,18 @@ import {
 } from 'wagmi';
 import { formatUnits, parseUnits } from 'viem';
 import { Droplets, TrendingUp, Clock } from 'lucide-react';
-import { USDC_ADDRESS, VAULT_POOL_ADDRESS } from '@/config/contracts';
+import {
+  CollateralToken,
+  IDRX_ADDRESS,
+  USDC_ADDRESS,
+  VAULT_POOL_ADDRESS,
+  VAULT_POOL_IDRX_ADDRESS,
+  isZeroAddress,
+} from '@/config/contracts';
 
 const VAULT_SHARE_DECIMALS = 18;
 
-const usdcABI = [
+const erc20ABI = [
   {
     inputs: [{ internalType: 'address', name: 'account', type: 'address' }],
     name: 'balanceOf',
@@ -103,47 +110,71 @@ interface LiquidityProvisionProps {
 export default function LiquidityProvision({ className = '' }: LiquidityProvisionProps) {
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
+  const [selectedToken, setSelectedToken] = useState<CollateralToken>('USDC');
   const [amount, setAmount] = useState('');
   const [mode, setMode] = useState<'deposit' | 'withdraw'>('deposit');
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
+  const vaults = useMemo(
+    () =>
+      [
+        {
+          token: 'USDC' as CollateralToken,
+          tokenAddress: USDC_ADDRESS,
+          vaultAddress: VAULT_POOL_ADDRESS,
+        },
+        {
+          token: 'IDRX' as CollateralToken,
+          tokenAddress: IDRX_ADDRESS,
+          vaultAddress: VAULT_POOL_IDRX_ADDRESS,
+        },
+      ].filter(
+        (vault) =>
+          !isZeroAddress(vault.tokenAddress) && !isZeroAddress(vault.vaultAddress),
+      ),
+    [],
+  );
+
+  const activeVault =
+    vaults.find((vault) => vault.token === selectedToken) ?? vaults[0];
+
   const { data: vaultAssets } = useReadContract({
-    address: VAULT_POOL_ADDRESS,
+    address: activeVault?.vaultAddress,
     abi: vaultPoolABI,
     functionName: 'totalAssets',
-    query: { enabled: !!publicClient },
+    query: { enabled: !!publicClient && !!activeVault },
   });
 
   const { data: vaultSharesSupply } = useReadContract({
-    address: VAULT_POOL_ADDRESS,
+    address: activeVault?.vaultAddress,
     abi: vaultPoolABI,
     functionName: 'totalSupply',
-    query: { enabled: !!publicClient },
+    query: { enabled: !!publicClient && !!activeVault },
   });
 
   const { data: userShares } = useReadContract({
-    address: VAULT_POOL_ADDRESS,
+    address: activeVault?.vaultAddress,
     abi: vaultPoolABI,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
-    query: { enabled: isConnected },
+    query: { enabled: isConnected && !!activeVault },
   });
 
   const { data: userUsdc } = useReadContract({
-    address: USDC_ADDRESS,
-    abi: usdcABI,
+    address: activeVault?.tokenAddress,
+    abi: erc20ABI,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
-    query: { enabled: isConnected },
+    query: { enabled: isConnected && !!activeVault },
   });
 
   const { data: allowance } = useReadContract({
-    address: USDC_ADDRESS,
-    abi: usdcABI,
+    address: activeVault?.tokenAddress,
+    abi: erc20ABI,
     functionName: 'allowance',
-    args: address ? [address, VAULT_POOL_ADDRESS] : undefined,
-    query: { enabled: isConnected && mode === 'deposit' },
+    args: address ? [address, activeVault?.vaultAddress] : undefined,
+    query: { enabled: isConnected && mode === 'deposit' && !!activeVault },
   });
 
   const { writeContractAsync } = useWriteContract();
@@ -183,12 +214,12 @@ export default function LiquidityProvision({ className = '' }: LiquidityProvisio
   }, [vaultAssets, vaultSharesSupply]);
 
   const handleSubmit = async () => {
-    if (!amount || !isConnected) return;
+    if (!amount || !isConnected || !activeVault) return;
     const amt = parseUnits(amount, 6);
 
     if (mode === 'deposit') {
       const previewShares = await publicClient?.readContract({
-        address: VAULT_POOL_ADDRESS,
+        address: activeVault.vaultAddress,
         abi: vaultPoolABI,
         functionName: 'convertToShares',
         args: [amt],
@@ -203,17 +234,17 @@ export default function LiquidityProvision({ className = '' }: LiquidityProvisio
 
       if (needsApproval) {
         const approveHash = await writeContractAsync({
-          address: USDC_ADDRESS,
-          abi: usdcABI,
+          address: activeVault.tokenAddress,
+          abi: erc20ABI,
           functionName: 'approve',
-          args: [VAULT_POOL_ADDRESS, amt],
+          args: [activeVault.vaultAddress, amt],
         });
         setTxHash(approveHash);
         await publicClient?.waitForTransactionReceipt({ hash: approveHash });
       }
 
       const hash = await writeContractAsync({
-        address: VAULT_POOL_ADDRESS,
+        address: activeVault.vaultAddress,
         abi: vaultPoolABI,
         functionName: 'deposit',
         args: [amt],
@@ -222,14 +253,14 @@ export default function LiquidityProvision({ className = '' }: LiquidityProvisio
     } else {
       // withdraw expects shares; convert assets to shares first
       const shares = await publicClient?.readContract({
-        address: VAULT_POOL_ADDRESS,
+        address: activeVault.vaultAddress,
         abi: vaultPoolABI,
         functionName: 'convertToShares',
         args: [amt],
       });
       const sharesToWithdraw = (shares as bigint) || 0n;
       const hash = await writeContractAsync({
-        address: VAULT_POOL_ADDRESS,
+        address: activeVault.vaultAddress,
         abi: vaultPoolABI,
         functionName: 'withdraw',
         args: [sharesToWithdraw],
@@ -252,20 +283,34 @@ export default function LiquidityProvision({ className = '' }: LiquidityProvisio
           icon={<TrendingUp className="text-green-400" size={18} />}
         />
         <MetricCard
-          label="Your USDC"
-          value={`${formattedUserUsdc} USDC`}
+          label={`Your ${selectedToken}`}
+          value={`${formattedUserUsdc} ${selectedToken}`}
           icon={<Clock className="text-blue-400" size={18} />}
         />
         <MetricCard
           label="Your Vault Shares"
-          value={`${formattedUserShares} vUSDC`}
+          value={`${formattedUserShares} v${selectedToken}`}
           icon={<Droplets className="text-purple-400" size={18} />}
         />
       </div>
 
       <div className="flex flex-col md:flex-row md:items-end gap-4">
         <div className="flex-1">
-          <label className="block text-sm text-gray-400 mb-2">Amount (USDC)</label>
+          <label className="block text-sm text-gray-400 mb-2">Collateral</label>
+          <select
+            value={selectedToken}
+            onChange={(e) => setSelectedToken(e.target.value as CollateralToken)}
+            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 mb-3"
+          >
+            {vaults.map((vault) => (
+              <option key={vault.token} value={vault.token}>
+                {vault.token}
+              </option>
+            ))}
+          </select>
+          <label className="block text-sm text-gray-400 mb-2">
+            Amount ({selectedToken})
+          </label>
           <input
             type="number"
             value={amount}
@@ -317,7 +362,7 @@ export default function LiquidityProvision({ className = '' }: LiquidityProvisio
       {mode === 'deposit' && minDepositForOneShareUnit && (
         <p className="text-xs text-gray-400 mt-2">
           Current min deposit to mint 1 share unit: ~
-          {Number(formatUnits(minDepositForOneShareUnit, 6)).toFixed(6)} USDC
+          {Number(formatUnits(minDepositForOneShareUnit, 6)).toFixed(6)} {selectedToken}
         </p>
       )}
       {error && <p className="text-xs text-red-400 mt-2">{error}</p>}

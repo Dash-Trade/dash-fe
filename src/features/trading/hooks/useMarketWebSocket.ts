@@ -26,6 +26,14 @@ export function useMarketWebSocket(markets: Market[]): UseMarketWebSocketReturn 
   const [futuresDataMap, setFuturesDataMap] = useState<Record<string, FuturesData>>({});
   const [oraclePrices, setOraclePrices] = useState<Record<string, OraclePrice>>({});
 
+  const normalizeOracleSymbol = (symbol: string) =>
+    symbol.replace(/[^a-z0-9]/gi, '').toUpperCase();
+  const getOracleKeys = (symbol: string) => {
+    const rawKey = symbol.trim().toUpperCase();
+    const normalizedKey = normalizeOracleSymbol(symbol);
+    return rawKey && rawKey !== normalizedKey ? [normalizedKey, rawKey] : [normalizedKey];
+  };
+
   // Seed oracle prices from REST once (covers new env feeds before WS ticks)
   useEffect(() => {
     const seedOracle = async () => {
@@ -38,13 +46,17 @@ export function useMarketWebSocket(markets: Market[]): UseMarketWebSocketReturn 
           const seeded: Record<string, OraclePrice> = {};
           Object.keys(body.data).forEach((symbol: string) => {
             const p = body.data[symbol];
-            seeded[symbol.toUpperCase()] = {
-              symbol: p.symbol || symbol.toUpperCase(),
+            const rawSymbol = p.symbol || symbol;
+            const entry = {
+              symbol: rawSymbol,
               price: p.price,
               confidence: p.confidence,
               timestamp: p.timestamp,
               source: p.source || 'pyth',
             };
+            getOracleKeys(rawSymbol).forEach((key) => {
+              seeded[key] = entry;
+            });
           });
           setOraclePrices((prev) => ({ ...prev, ...seeded }));
         }
@@ -199,13 +211,17 @@ export function useMarketWebSocket(markets: Market[]): UseMarketWebSocketReturn 
                 const next: Record<string, OraclePrice> = { ...prev };
                 Object.keys(message.data).forEach((symbol) => {
                   const priceData = message.data[symbol];
-                  next[symbol.toUpperCase()] = {
-                    symbol: priceData.symbol,
+                  const rawSymbol = priceData.symbol || symbol;
+                  const entry = {
+                    symbol: rawSymbol,
                     price: priceData.price,
                     confidence: priceData.confidence,
                     timestamp: priceData.timestamp,
                     source: priceData.source,
                   };
+                  getOracleKeys(rawSymbol).forEach((key) => {
+                    next[key] = entry;
+                  });
                 });
                 return next;
               });

@@ -3,7 +3,9 @@
 import React, { useState, useEffect } from 'react';
 import { X, TrendingUp, Clock, DollarSign, Zap } from 'lucide-react';
 import { useOneTapProfit } from '@/features/trading/hooks/useOneTapProfitBetting';
-import { useUSDCBalance } from '@/hooks/data/useUSDCBalance';
+import { useTokenBalance } from '@/hooks/data/useTokenBalance';
+import { useMarket } from '@/features/trading/contexts/MarketContext';
+import { COLLATERAL_CONFIG, CollateralToken } from '@/config/contracts';
 
 interface OneTapProfitModalProps {
   isOpen: boolean;
@@ -26,8 +28,11 @@ const OneTapProfitModal: React.FC<OneTapProfitModalProps> = ({
   entryTime,
   isBinaryTradingEnabled,
 }) => {
-  const { placeBet, placeBetWithSession, calculateMultiplier, isPlacingBet, sessionKey, createSession, isSessionValid } = useOneTapProfit();
-  const { usdcBalance } = useUSDCBalance();
+  const { collateralToken } = useMarket();
+  const collateralConfig = COLLATERAL_CONFIG[collateralToken as CollateralToken];
+  const { placeBet, placeBetWithSession, calculateMultiplier, isPlacingBet, isSessionValid } =
+    useOneTapProfit(collateralToken);
+  const { balance } = useTokenBalance(collateralConfig.address, collateralConfig.decimals);
   
   const [betAmount, setBetAmount] = useState('10');
   const [multiplier, setMultiplier] = useState<number | null>(null);
@@ -69,23 +74,35 @@ const OneTapProfitModal: React.FC<OneTapProfitModalProps> = ({
       return;
     }
 
-    if (parseFloat(betAmount) > parseFloat(usdcBalance)) {
-      setError('Insufficient USDC balance');
+    if (parseFloat(betAmount) > parseFloat(balance)) {
+      setError(`Insufficient ${collateralToken} balance`);
       return;
     }
 
     setError('');
 
     try {
-      // Use session key for fully gasless betting
-      await placeBetWithSession({
-        symbol,
-        betAmount,
-        targetPrice,
-        targetTime,
-        entryPrice,
-        entryTime,
-      });
+      if (isSessionValid()) {
+        // Use session key for fully gasless betting
+        await placeBetWithSession({
+          symbol,
+          betAmount,
+          targetPrice,
+          targetTime,
+          entryPrice,
+          entryTime,
+        });
+      } else {
+        // Fallback to manual signature if session key is unavailable
+        await placeBet({
+          symbol,
+          betAmount,
+          targetPrice,
+          targetTime,
+          entryPrice,
+          entryTime,
+        });
+      }
 
       onClose();
       setBetAmount('10'); // Reset
@@ -164,7 +181,9 @@ const OneTapProfitModal: React.FC<OneTapProfitModalProps> = ({
 
           {/* Bet Amount Input */}
           <div>
-            <label className="block text-sm text-gray-400 mb-2">Bet Amount (USDC)</label>
+            <label className="block text-sm text-gray-400 mb-2">
+              Bet Amount ({collateralToken})
+            </label>
             <div className="relative">
               <input
                 type="number"
@@ -176,13 +195,15 @@ const OneTapProfitModal: React.FC<OneTapProfitModalProps> = ({
                 step="0.1"
               />
               <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
-                USDC
+                {collateralToken}
               </div>
             </div>
             <div className="flex justify-between mt-1">
-              <span className="text-xs text-gray-500">Balance: {parseFloat(usdcBalance).toFixed(2)} USDC</span>
+              <span className="text-xs text-gray-500">
+                Balance: {parseFloat(balance).toFixed(2)} {collateralToken}
+              </span>
               <button
-                onClick={() => setBetAmount((parseFloat(usdcBalance) * 0.5).toFixed(2))}
+                onClick={() => setBetAmount((parseFloat(balance) * 0.5).toFixed(2))}
                 className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
               >
                 Use 50%
@@ -196,7 +217,9 @@ const OneTapProfitModal: React.FC<OneTapProfitModalProps> = ({
               <span className="text-green-400 text-sm font-medium">Potential Win</span>
               <div className="flex items-center gap-2">
                 <DollarSign className="text-green-400" size={18} />
-                <span className="text-green-400 font-bold text-xl">{potentialWin} USDC</span>
+                <span className="text-green-400 font-bold text-xl">
+                  {potentialWin} {collateralToken}
+                </span>
               </div>
             </div>
             <p className="text-xs text-gray-400 mt-1">

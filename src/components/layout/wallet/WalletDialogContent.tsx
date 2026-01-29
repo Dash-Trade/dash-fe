@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { Copy, ExternalLink, LogOut, Wallet, Key, DollarSign, X } from 'lucide-react';
 import { DialogClose } from '@/components/ui/dialog';
 import { useWalletBalance } from '@/hooks/wallet/useWalletBalance';
@@ -8,7 +8,7 @@ import { useWalletActions } from '@/hooks/wallet/useWalletActions';
 import { useUSDCFaucet } from '@/hooks/wallet/useUSDCFaucet';
 
 export const WalletDialogContent: React.FC = () => {
-  const { usdcBalance, isLoadingBalance } = useWalletBalance();
+  const { usdcBalance, idrxBalance, isLoadingBalance } = useWalletBalance();
   const {
     shortAddress,
     handleCopyAddress,
@@ -17,6 +17,18 @@ export const WalletDialogContent: React.FC = () => {
     handleDisconnect,
   } = useWalletActions();
   const { isClaiming, handleClaimUSDC } = useUSDCFaucet();
+  const [selectedToken, setSelectedToken] = useState<'USDC' | 'IDRX'>('USDC');
+
+  const displayUsd = useMemo(() => {
+    if (isLoadingBalance) return '0.00';
+    const usdc = parseFloat(usdcBalance || '0');
+    const idrx = parseFloat(idrxBalance || '0');
+    if (selectedToken === 'USDC') {
+      return usdc.toFixed(2);
+    }
+    const idrxUsd = idrx / 16700;
+    return idrxUsd.toFixed(2);
+  }, [idrxBalance, isLoadingBalance, selectedToken, usdcBalance]);
 
   return (
     <>
@@ -81,11 +93,33 @@ export const WalletDialogContent: React.FC = () => {
           <div className="flex items-center gap-2 text-slate-400 text-sm">
             <span>Balance</span>
           </div>
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800/50 rounded-lg">
-            <div className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center">
-              <span className="text-white text-[10px] font-bold">$</span>
-            </div>
-            <span className="text-slate-100 text-sm font-medium">USDC</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSelectedToken('USDC')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-colors ${
+                selectedToken === 'USDC'
+                  ? 'bg-slate-800/50 text-slate-100 border-slate-700'
+                  : 'bg-transparent text-slate-400 border-slate-800 hover:text-slate-200'
+              }`}
+            >
+              <div className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center">
+                <span className="text-white text-[10px] font-bold">$</span>
+              </div>
+              <span className="text-sm font-medium">USDC</span>
+            </button>
+            <button
+              onClick={() => setSelectedToken('IDRX')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-colors ${
+                selectedToken === 'IDRX'
+                  ? 'bg-slate-800/50 text-slate-100 border-slate-700'
+                  : 'bg-transparent text-slate-400 border-slate-800 hover:text-slate-200'
+              }`}
+            >
+              <div className="w-5 h-5 rounded-full bg-slate-700 flex items-center justify-center">
+                <span className="text-white text-[10px] font-bold">Rp</span>
+              </div>
+              <span className="text-sm font-medium">IDRX</span>
+            </button>
           </div>
         </div>
 
@@ -93,11 +127,21 @@ export const WalletDialogContent: React.FC = () => {
           {isLoadingBalance ? (
             <span className="text-slate-400 text-2xl">Loading...</span>
           ) : (
-            <span>${usdcBalance || '0.00'}</span>
+            <span>${displayUsd}</span>
+          )}
+        </div>
+        <div className="text-xs text-slate-400 mb-5">
+          {isLoadingBalance ? (
+            <span>Loading balance...</span>
+          ) : (
+            <span>
+              {selectedToken === 'USDC' ? usdcBalance || '0.00' : idrxBalance || '0.00'}{' '}
+              {selectedToken}
+            </span>
           )}
         </div>
 
-        {/* Deposit, Withdraw & Claim USDC Buttons */}
+        {/* Deposit, Withdraw & Claim Buttons */}
         <div className="grid grid-cols-3 gap-3">
           <button className="py-3 px-4 bg-slate-700/50 hover:bg-slate-700 rounded-xl text-slate-100 font-medium transition-colors cursor-pointer">
             Deposit
@@ -109,7 +153,7 @@ export const WalletDialogContent: React.FC = () => {
             onClick={handleClaimUSDC}
             disabled={isClaiming}
             className="py-3 px-4 bg-green-600 hover:bg-green-700 disabled:bg-green-800 disabled:cursor-not-allowed rounded-xl text-white font-medium transition-colors cursor-pointer flex items-center justify-center gap-2"
-            title="Claim 100 Mock USDC"
+            title="Claim 1,000 USDC + 1,000,000 IDRX"
           >
             <DollarSign className="w-4 h-4" />
             {isClaiming ? 'Claiming...' : 'Claim'}

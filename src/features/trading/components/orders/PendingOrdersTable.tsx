@@ -8,15 +8,17 @@ import {
 import { formatMarketPair } from '@/features/trading/lib/marketUtils';
 import { formatUnits } from 'viem';
 import { toast } from 'sonner';
+import { useMarket } from '@/features/trading/contexts/MarketContext';
 
 const PendingOrdersTable = () => {
-  const { orders, isLoading, refetch } = useUserPendingOrders();
+  const { collateralToken } = useMarket();
+  const { orders, isLoading, refetch } = useUserPendingOrders(collateralToken);
   const { cancelOrder, isPending: isCancelling } = useCancelOrder();
 
   const handleCancelOrder = async (orderId: bigint) => {
     try {
       toast.loading('Cancelling order...', { id: 'cancel-order' });
-      await cancelOrder(orderId);
+      await cancelOrder(orderId, collateralToken);
       toast.success('Order cancelled!', { id: 'cancel-order' });
       // Refetch orders after 1 second
       setTimeout(() => refetch(), 1000);

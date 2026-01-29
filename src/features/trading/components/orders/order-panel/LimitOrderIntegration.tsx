@@ -10,24 +10,30 @@
 import { useState } from 'react';
 import {
   useCreateLimitOpenOrder,
-  useApproveUSDCForLimitOrders,
   useExecutionFee,
   useLimitExecutorConfig,
   calculateLimitOrderCost,
 } from '@/features/trading/hooks/useLimitOrder';
 import { toast } from 'sonner';
+import { CollateralToken } from '@/config/contracts';
+import { useGlobalTradingActivation } from '@/features/wallet/hooks/useGlobalTradingActivation';
 
-export function useLimitOrderSubmit() {
+export function useLimitOrderSubmit(collateralToken: CollateralToken = 'USDC') {
   const {
     createOrder,
     isPending: isCreatingOrder,
     isSuccess,
     submission,
   } = useCreateLimitOpenOrder();
-  const { approve, hasAllowance, isPending: isApproving } = useApproveUSDCForLimitOrders();
   const { executionFee, executionFeeFormatted, error: executionFeeError } = useExecutionFee();
-  const { tradingFeeBps } = useLimitExecutorConfig();
+  const { tradingFeeBps } = useLimitExecutorConfig(collateralToken);
   const [isProcessing, setIsProcessing] = useState(false);
+  const {
+    approveAll,
+    hasGlobalAllowance,
+    isApproving: isApproving,
+    maxApproval,
+  } = useGlobalTradingActivation();
 
   const submitLimitOrder = async (params: {
     symbol: string;
@@ -37,6 +43,7 @@ export function useLimitOrderSubmit() {
     triggerPrice: string;
     takeProfit?: string; // Optional TP price (8 decimals)
     stopLoss?: string; // Optional SL price (8 decimals)
+    collateralToken?: CollateralToken;
   }) => {
     try {
       setIsProcessing(true);
@@ -66,13 +73,12 @@ export function useLimitOrderSubmit() {
       }
 
       // 3. Check and approve USDC if needed (UNLIMITED APPROVAL - once only!)
-      const UNLIMITED_APPROVAL = '1000000000'; // 1B USDC (effectively unlimited)
-      if (!hasAllowance(cost.totalCostFormatted)) {
-        toast.loading('Approving USDC for limit orders (one-time only)...', {
+      if (!hasGlobalAllowance(maxApproval)) {
+        toast.loading('Approving collateral (one-time only)...', {
           id: 'limit-order-approve',
         });
-        await approve(UNLIMITED_APPROVAL);
-        toast.success('USDC approved! You can now create limit orders without approval.', {
+        await approveAll(maxApproval);
+        toast.success('Collateral approved! You can now create limit orders without approval.', {
           id: 'limit-order-approve',
         });
       }
@@ -87,6 +93,7 @@ export function useLimitOrderSubmit() {
         triggerPrice: params.triggerPrice,
         takeProfit: params.takeProfit,
         stopLoss: params.stopLoss,
+        collateralToken: params.collateralToken ?? 'USDC',
       });
 
       // Show success message with TP/SL info if configured

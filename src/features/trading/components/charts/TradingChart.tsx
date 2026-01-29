@@ -32,6 +32,7 @@ const TradingChart: React.FC = () => {
     setActiveMarket,
     setCurrentPrice,
     timeframe,
+    collateralToken,
   } = useMarket();
 
   const baseMarkets = useMemo<Market[]>(() => ALL_MARKETS, []);
@@ -42,7 +43,8 @@ const TradingChart: React.FC = () => {
   const triggerButtonRef = useRef<HTMLButtonElement>(null);
 
   const tapToTrade = useTapToTrade();
-  const { placeBetWithSession, isPlacingBet, activeBets, sessionPnL } = useOneTapProfit();
+  const { placeBet, placeBetWithSession, isPlacingBet, activeBets, sessionPnL } =
+    useOneTapProfit(collateralToken);
   const { usdcBalance } = useUSDCBalance();
 
   // Axis Configuration
@@ -378,20 +380,31 @@ const TradingChart: React.FC = () => {
                   : {})}
                 onCellClick={(targetPrice, targetTime, entryPrice, entryTime) => {
                   if (tapToTrade.tradeMode === 'one-tap-profit') {
-                    placeBetWithSession(
-                      {
+                    if (tapToTrade.sessionKey && tapToTrade.sessionTimeRemaining > 0) {
+                      placeBetWithSession(
+                        {
+                          symbol: activeMarket.symbol,
+                          betAmount: tapToTrade.betAmount || '10',
+                          targetPrice: targetPrice.toString(),
+                          targetTime: targetTime,
+                          entryPrice: entryPrice.toString(),
+                          entryTime: entryTime,
+                        },
+                        {
+                          sessionKey: tapToTrade.sessionKey,
+                          sessionSigner: tapToTrade.signWithSession,
+                        },
+                      );
+                    } else {
+                      placeBet({
                         symbol: activeMarket.symbol,
                         betAmount: tapToTrade.betAmount || '10',
                         targetPrice: targetPrice.toString(),
                         targetTime: targetTime,
                         entryPrice: entryPrice.toString(),
                         entryTime: entryTime,
-                      },
-                      {
-                        sessionKey: tapToTrade.sessionKey,
-                        sessionSigner: tapToTrade.signWithSession,
-                      },
-                    );
+                      });
+                    }
                   } else if (tapToTrade.tradeMode === 'open-position' && tapToTrade.gridSession) {
                     // Open Position mode - map click to grid cell
                     const session = tapToTrade.gridSession;

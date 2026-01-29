@@ -164,15 +164,19 @@ export default function MarketSelector(props: MarketSelectorProps) {
             tab.id === 'starred'
               ? favorites.size > 0
               : props.markets.some((m) => m.category === tab.id);
+          const isActive = activeTab === tab.id;
+          const isDisabled = !hasMarkets && tab.id !== 'starred';
           return (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              disabled={!hasMarkets && tab.id !== 'starred'}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border transition-all ${activeTab === tab.id
-                  ? 'bg-primary/10 border-primary text-primary'
+              disabled={isDisabled}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
+                isActive
+                  ? 'bg-primary text-white border-primary shadow-[0_0_0_1px_rgba(0,0,0,0.2)]'
                   : 'bg-trading-surface border-border-muted text-text-secondary hover:text-text-primary'
-                } ${!hasMarkets && tab.id !== 'starred' ? 'opacity-50 cursor-not-allowed' : ''}`}
+              } ${isDisabled && !isActive ? 'opacity-50 cursor-not-allowed' : ''}`}
+              aria-pressed={isActive}
             >
               {tab.icon}
               <span>{tab.label}</span>

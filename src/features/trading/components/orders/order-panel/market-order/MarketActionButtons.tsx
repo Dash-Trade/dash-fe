@@ -27,14 +27,14 @@ export const MarketActionButtons: React.FC<MarketActionButtonsProps> = ({
 }) => {
   const getButtonText = () => {
     if (!authenticated) return 'Connect Wallet';
-    if (isUSDCApprovalPending) return 'Approving USDC...';
+    if (isUSDCApprovalPending) return 'Approving Collateral...';
     if (isApproving) return 'Approving for Paymaster...';
     if (isDepositing) return 'Depositing to Paymaster...';
     if (isRelayPending) return 'Opening Position...';
     if (!payAmount || parseFloat(payAmount) <= 0) return 'Enter Amount';
 
     if ((activeTab === 'long' || activeTab === 'short') && !hasLargeAllowance) {
-      return `Approve & ${activeTab === 'long' ? 'Long' : 'Short'}`;
+      return 'Activate Trading';
     }
 
     if (activeTab === 'long') return 'Buy / Long';

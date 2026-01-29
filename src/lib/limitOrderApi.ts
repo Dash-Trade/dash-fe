@@ -10,6 +10,7 @@ export interface LimitOpenOrderRequest {
   nonce: string;
   expiresAt: string;
   signature: `0x${string}`;
+  collateralToken?: string;
   takeProfit?: string; // optional TP price (8 decimals)
   stopLoss?: string; // optional SL price (8 decimals)
   metadata?: {

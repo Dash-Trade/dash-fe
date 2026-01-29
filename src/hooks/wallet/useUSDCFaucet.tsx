@@ -1,12 +1,11 @@
-import { useState } from 'react';
-import { usePrivy, useWallets } from '@privy-io/react-auth';
+﻿import { useState } from 'react';
+import { usePrivy, useSendTransaction } from '@privy-io/react-auth';
 import { encodeFunctionData } from 'viem';
 import { toast } from 'sonner';
-import { USDC_ADDRESS } from '@/config/contracts';
-import React from 'react';
+import { IDRX_ADDRESS, USDC_ADDRESS, isZeroAddress } from '@/config/contracts';
+import { useActivePrivyWallet } from '@/features/wallet/hooks/useActivePrivyWallet';
 
-// Mock USDC ABI with faucet function
-const MOCK_USDC_ABI = [
+const MOCK_TOKEN_ABI = [
   {
     inputs: [],
     name: 'faucet',
@@ -35,9 +34,27 @@ const MOCK_USDC_ABI = [
   },
 ] as const;
 
+const FAUCET_TOKENS = [
+  {
+    symbol: 'USDC',
+    address: USDC_ADDRESS,
+    amountLabel: '1,000 USDC',
+  },
+  {
+    symbol: 'IDRX',
+    address: IDRX_ADDRESS,
+    amountLabel: '1,000,000 IDRX',
+  },
+].filter((token) => !isZeroAddress(token.address)) as Array<{
+  symbol: 'USDC' | 'IDRX';
+  address: `0x${string}`;
+  amountLabel: string;
+}>;
+
 export const useUSDCFaucet = () => {
   const { authenticated, user } = usePrivy();
-  const { wallets } = useWallets();
+  const { activeWallet, address } = useActivePrivyWallet();
+  const { sendTransaction } = useSendTransaction();
   const [isClaiming, setIsClaiming] = useState(false);
 
   const handleClaimUSDC = async () => {
@@ -46,13 +63,13 @@ export const useUSDCFaucet = () => {
       return;
     }
 
-    const embeddedWallet = wallets.find((w) => w.walletClientType === 'privy');
-    if (!embeddedWallet) {
+    const embeddedWallet = activeWallet;
+    const walletAddress = address ?? embeddedWallet?.address;
+    if (!embeddedWallet || !walletAddress) {
       toast.error('Embedded wallet not found');
       return;
     }
 
-    const walletAddress = embeddedWallet.address;
     setIsClaiming(true);
     const loadingToast = toast.loading('Checking claim status...');
 
@@ -60,85 +77,109 @@ export const useUSDCFaucet = () => {
       const provider = await embeddedWallet.getEthereumProvider();
       if (!provider) throw new Error('Could not get wallet provider');
 
-      // Check if user has already claimed
-      const hasClaimedData = encodeFunctionData({
-        abi: MOCK_USDC_ABI,
-        functionName: 'hasClaimed',
-        args: [walletAddress as `0x${string}`],
-      });
+      const claimableTokens: typeof FAUCET_TOKENS = [] as any;
 
-      const hasClaimedResult = await provider.request({
-        method: 'eth_call',
-        params: [
-          {
-            to: USDC_ADDRESS,
-            data: hasClaimedData,
-          },
-          'latest',
-        ],
-      });
+      for (const token of FAUCET_TOKENS) {
+        const hasClaimedData = encodeFunctionData({
+          abi: MOCK_TOKEN_ABI,
+          functionName: 'hasClaimed',
+          args: [walletAddress as `0x${string}`],
+        });
 
-      const alreadyClaimed =
-        hasClaimedResult !== '0x0000000000000000000000000000000000000000000000000000000000000000';
+        const hasClaimedResult = await provider.request({
+          method: 'eth_call',
+          params: [
+            {
+              to: token.address,
+              data: hasClaimedData,
+            },
+            'latest',
+          ],
+        });
 
-      if (alreadyClaimed) {
+        const alreadyClaimed =
+          hasClaimedResult !==
+          '0x0000000000000000000000000000000000000000000000000000000000000000';
+
+        if (!alreadyClaimed) {
+          claimableTokens.push(token);
+        }
+      }
+
+      if (claimableTokens.length === 0) {
         toast.error(
-          'You have already claimed USDC from the faucet. Each wallet can only claim once.',
+          'You have already claimed USDC and IDRX from the faucet. Each wallet can only claim once.',
           { id: loadingToast, duration: 5000 },
         );
         return;
       }
 
-      toast.loading('Claiming USDC from faucet...', { id: loadingToast });
+      toast.loading('Claiming USDC + IDRX from faucet...', { id: loadingToast });
 
       const data = encodeFunctionData({
-        abi: MOCK_USDC_ABI,
+        abi: MOCK_TOKEN_ABI,
         functionName: 'faucet',
         args: [],
       });
 
-      const txHash = await provider.request({
-        method: 'eth_sendTransaction',
-        params: [
+      let lastTxHash: string | undefined;
+      for (const token of claimableTokens) {
+        const txResult = await sendTransaction(
           {
-            from: walletAddress,
-            to: USDC_ADDRESS,
+            to: token.address,
             data: data,
+            value: 0n,
           },
-        ],
-      });
+          {
+            sponsor: true,
+          },
+        );
+        let txHash: string | undefined;
+        if (typeof txResult === 'string') {
+          txHash = txResult;
+        } else if (txResult && typeof txResult === 'object') {
+          const maybeHash = (txResult as any).transactionHash || (txResult as any).hash;
+          if (typeof maybeHash === 'string') {
+            txHash = maybeHash;
+          }
+        }
+        if (txHash) {
+          lastTxHash = txHash;
+        }
+      }
 
-      toast.success('USDC claimed successfully! 🎉', {
+      const claimedLabel = claimableTokens.map((token) => token.amountLabel).join(' + ');
+      toast.success(`Faucet claimed: ${claimedLabel}`, {
         id: loadingToast,
         duration: 4000,
       });
 
-      // Show transaction link
-      setTimeout(() => {
-        toast.success(
-          <div className="flex flex-col gap-1">
-            <span>View on Explorer:</span>
-            <a
-              href={`https://sepolia.basescan.org/tx/${txHash}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline text-blue-400 hover:text-blue-300"
-            >
-              Click here
-            </a>
-          </div>,
-          { duration: 5000 },
-        );
-      }, 500);
+      if (lastTxHash) {
+        setTimeout(() => {
+          toast.success(
+            <div className="flex flex-col gap-1">
+              <span>View on Explorer:</span>
+              <a
+                href={`https://sepolia.basescan.org/tx/${lastTxHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline text-blue-400 hover:text-blue-300"
+              >
+                Click here
+              </a>
+            </div>,
+            { duration: 5000 },
+          );
+        }, 500);
+      }
 
-      // Reload the page to refresh balance
       setTimeout(() => {
         window.location.reload();
       }, 2000);
 
-      return txHash;
+      return lastTxHash;
     } catch (error: any) {
-      let errorMessage = 'Failed to claim USDC from faucet';
+      let errorMessage = 'Failed to claim faucet rewards';
       if (error?.message?.includes('user rejected')) {
         errorMessage = 'Transaction was rejected';
       } else if (error?.message) {

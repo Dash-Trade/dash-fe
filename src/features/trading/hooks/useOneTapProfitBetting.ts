@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { usePrivy, useWallets } from '@privy-io/react-auth';
+import { usePrivy } from '@privy-io/react-auth';
 import { useSessionKey } from '@/features/wallet/hooks/useSessionKey';
 import {
   encodeFunctionData,
@@ -14,33 +14,10 @@ import {
 import { baseSepolia } from 'viem/chains';
 import axios from 'axios';
 import { toast } from 'sonner';
+import { CollateralToken, getCollateralConfig } from '@/config/contracts';
+import { useActivePrivyWallet } from '@/features/wallet/hooks/useActivePrivyWallet';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
-const ONE_TAP_PROFIT_ADDRESS = process.env.NEXT_PUBLIC_ONE_TAP_PROFIT_ADDRESS as `0x${string}`;
-const USDC_ADDRESS = process.env.NEXT_PUBLIC_USDC_TOKEN_ADDRESS as `0x${string}`;
-
-const USDC_ABI = [
-  {
-    inputs: [
-      { name: 'spender', type: 'address' },
-      { name: 'amount', type: 'uint256' },
-    ],
-    name: 'approve',
-    outputs: [{ name: '', type: 'bool' }],
-    stateMutability: 'nonpayable',
-    type: 'function',
-  },
-  {
-    inputs: [
-      { name: 'owner', type: 'address' },
-      { name: 'spender', type: 'address' },
-    ],
-    name: 'allowance',
-    outputs: [{ name: '', type: 'uint256' }],
-    stateMutability: 'view',
-    type: 'function',
-  },
-] as const;
 
 interface PlaceBetParams {
   symbol: string;
@@ -72,29 +49,31 @@ interface MultiplierResult {
   timeDistance: number;
 }
 
-export const useOneTapProfit = () => {
+export const useOneTapProfit = (collateralToken: CollateralToken = 'USDC') => {
   const { user, authenticated } = usePrivy();
-  const { wallets } = useWallets();
+  const { activeWallet, address } = useActivePrivyWallet();
+  const collateralConfig = getCollateralConfig(collateralToken);
   const [isPlacingBet, setIsPlacingBet] = useState(false);
   const [activeBets, setActiveBets] = useState<Bet[]>([]);
   const [isLoadingBets, setIsLoadingBets] = useState(false);
   const prevActiveBetsRef = useRef<Bet[]>([]);
   const hasInitializedRef = useRef(false);
 
-  const embeddedWallet = wallets.find((w) => w.walletClientType === 'privy');
+  const embeddedWallet = activeWallet;
+  const traderAddress = address ?? embeddedWallet?.address;
 
   const [sessionPnL, setSessionPnL] = useState<number>(0);
 
   // Poll for active bets to update status and detect wins
   useEffect(() => {
-    if (!authenticated || !user || !embeddedWallet) return;
+    if (!authenticated || !user || !traderAddress) return;
 
     const intervalId = setInterval(() => {
       fetchActiveBets();
     }, 2000); // Poll every 2 seconds
 
     return () => clearInterval(intervalId);
-  }, [authenticated, user, embeddedWallet]);
+  }, [authenticated, user, traderAddress, collateralToken]);
 
   // Win detection logic
   useEffect(() => {
@@ -114,7 +93,11 @@ export const useOneTapProfit = () => {
       // Check status of missing bets to see if they won
       missingBets.forEach(async (bet: Bet) => {
         try {
-          const response = await axios.get(`${BACKEND_URL}/api/one-tap/bet/${bet.betId}`);
+          const response = await axios.get(`${BACKEND_URL}/api/one-tap/bet/${bet.betId}`, {
+            params: {
+              collateralToken,
+            },
+          });
           const status = response.data.data.status;
 
           if (status === 'WON') {
@@ -213,7 +196,7 @@ export const useOneTapProfit = () => {
         sessionSigner: (hash: `0x${string}`) => Promise<string | null>;
       },
     ) => {
-      if (!authenticated || !user || !embeddedWallet) {
+      if (!authenticated || !user || !traderAddress) {
         throw new Error('Wallet not connected');
       }
 
@@ -236,7 +219,7 @@ export const useOneTapProfit = () => {
       setIsPlacingBet(true);
 
       try {
-        const userAddress = embeddedWallet.address;
+        const userAddress = traderAddress;
 
         // Sign bet parameters with session key
         const messageHash = keccak256(
@@ -245,7 +228,7 @@ export const useOneTapProfit = () => {
             [
               userAddress as `0x${string}`,
               params.symbol,
-              parseUnits(params.betAmount, 6),
+              parseUnits(params.betAmount, collateralConfig.decimals),
               parseUnits(params.targetPrice, 8),
               BigInt(Math.floor(params.targetTime)),
             ],
@@ -264,6 +247,7 @@ export const useOneTapProfit = () => {
           entryPrice: params.entryPrice,
           entryTime: params.entryTime,
           sessionSignature,
+          collateralToken,
         });
 
         // Refresh active bets
@@ -280,11 +264,12 @@ export const useOneTapProfit = () => {
     [
       authenticated,
       user,
-      embeddedWallet,
+      traderAddress,
       isSessionValid,
       createSession,
       signWithSession,
       sessionKey,
+      collateralToken,
     ],
   );
 
@@ -293,7 +278,7 @@ export const useOneTapProfit = () => {
    */
   const placeBet = useCallback(
     async (params: PlaceBetParams) => {
-      if (!authenticated || !user || !embeddedWallet) {
+      if (!authenticated || !user || !embeddedWallet || !traderAddress) {
         throw new Error('Wallet not connected');
       }
 
@@ -301,7 +286,7 @@ export const useOneTapProfit = () => {
 
       try {
         const ethereumProvider = await embeddedWallet.getEthereumProvider();
-        const userAddress = embeddedWallet.address as `0x${string}`;
+        const userAddress = traderAddress as `0x${string}`;
 
         // Create wallet client
         const walletClient = createWalletClient({
@@ -329,7 +314,7 @@ export const useOneTapProfit = () => {
           method: 'eth_call',
           params: [
             {
-              to: ONE_TAP_PROFIT_ADDRESS,
+              to: collateralConfig.oneTapProfit,
               data: nonceData,
             },
             'latest',
@@ -346,11 +331,11 @@ export const useOneTapProfit = () => {
             [
               userAddress,
               params.symbol,
-              parseUnits(params.betAmount, 6),
+              parseUnits(params.betAmount, collateralConfig.decimals),
               parseUnits(params.targetPrice, 8),
               BigInt(Math.floor(params.targetTime)),
               nonce,
-              ONE_TAP_PROFIT_ADDRESS,
+              collateralConfig.oneTapProfit,
             ],
           ),
         );
@@ -360,48 +345,6 @@ export const useOneTapProfit = () => {
           account: userAddress,
           message: { raw: messageHash },
         });
-
-        // Check USDC allowance
-        const allowanceData = encodeFunctionData({
-          abi: USDC_ABI,
-          functionName: 'allowance',
-          args: [userAddress, ONE_TAP_PROFIT_ADDRESS],
-        });
-
-        const allowanceResult = await ethereumProvider.request({
-          method: 'eth_call',
-          params: [
-            {
-              to: USDC_ADDRESS,
-              data: allowanceData,
-            },
-            'latest',
-          ],
-        });
-
-        const allowance = BigInt(allowanceResult as string);
-
-        // Approve infinite USDC if needed (only once)
-        if (allowance === 0n) {
-          // Use max uint256 for infinite approval
-          const maxApproval = BigInt(
-            '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
-          );
-
-          const approveData = encodeFunctionData({
-            abi: USDC_ABI,
-            functionName: 'approve',
-            args: [ONE_TAP_PROFIT_ADDRESS, maxApproval],
-          });
-
-          const approveTxHash = await walletClient.sendTransaction({
-            account: userAddress,
-            to: USDC_ADDRESS,
-            data: approveData,
-          });
-
-          await new Promise((resolve) => setTimeout(resolve, 3000));
-        }
 
         // Call backend to place bet
         const response = await axios.post(`${BACKEND_URL}/api/one-tap/place-bet`, {
@@ -414,6 +357,7 @@ export const useOneTapProfit = () => {
           entryTime: params.entryTime,
           nonce: nonce.toString(),
           userSignature: signature,
+          collateralToken,
         });
 
         // Refresh active bets
@@ -427,26 +371,27 @@ export const useOneTapProfit = () => {
         setIsPlacingBet(false);
       }
     },
-    [authenticated, user, embeddedWallet],
+    [authenticated, user, embeddedWallet, traderAddress, collateralToken],
   );
 
   /**
    * Fetch active bets
    */
   const fetchActiveBets = useCallback(async () => {
-    if (!authenticated || !user || !embeddedWallet) {
+    if (!authenticated || !user || !traderAddress) {
       return;
     }
 
     setIsLoadingBets(true);
 
     try {
-      const userAddress = embeddedWallet.address;
+      const userAddress = traderAddress;
 
       const response = await axios.get(`${BACKEND_URL}/api/one-tap/bets`, {
         params: {
           trader: userAddress,
           status: 'ACTIVE',
+          collateralToken,
         },
       });
 
@@ -456,22 +401,23 @@ export const useOneTapProfit = () => {
     } finally {
       setIsLoadingBets(false);
     }
-  }, [authenticated, user, embeddedWallet]);
+  }, [authenticated, user, traderAddress, collateralToken]);
 
   /**
    * Fetch user's bet history
    */
   const fetchBetHistory = useCallback(async () => {
-    if (!authenticated || !user || !embeddedWallet) {
+    if (!authenticated || !user || !traderAddress) {
       return [];
     }
 
     try {
-      const userAddress = embeddedWallet.address;
+      const userAddress = traderAddress;
 
       const response = await axios.get(`${BACKEND_URL}/api/one-tap/bets`, {
         params: {
           trader: userAddress,
+          collateralToken,
         },
       });
 
@@ -480,20 +426,24 @@ export const useOneTapProfit = () => {
       console.error('Failed to fetch bet history:', error);
       return [];
     }
-  }, [authenticated, user, embeddedWallet]);
+  }, [authenticated, user, traderAddress, collateralToken]);
 
   /**
    * Get statistics
    */
   const fetchStats = useCallback(async () => {
     try {
-      const response = await axios.get(`${BACKEND_URL}/api/one-tap/stats`);
+      const response = await axios.get(`${BACKEND_URL}/api/one-tap/stats`, {
+        params: {
+          collateralToken,
+        },
+      });
       return response.data.data;
     } catch (error) {
       console.error('Failed to fetch stats:', error);
       return null;
     }
-  }, []);
+  }, [collateralToken]);
 
   return {
     placeBet,

@@ -1,10 +1,11 @@
 'use client';
 
 import React, { createContext, useContext, useState, ReactNode, useEffect, useRef } from 'react';
-import { usePrivy, useWallets } from '@privy-io/react-auth';
 import { keccak256, encodePacked, encodeFunctionData, toHex } from 'viem';
 import { useSessionKey } from '@/features/wallet/hooks/useSessionKey';
-import { TAP_TO_TRADE_EXECUTOR_ADDRESS, MARKET_EXECUTOR_ADDRESS } from '@/config/contracts';
+import { CollateralToken, getCollateralConfig } from '@/config/contracts';
+import { useMarket } from '@/features/trading/contexts/MarketContext';
+import { useActivePrivyWallet } from '@/features/wallet/hooks/useActivePrivyWallet';
 
 interface GridSession {
   id: string;
@@ -19,6 +20,7 @@ interface GridSession {
   referencePrice: string;
   isActive: boolean;
   createdAt: number;
+  collateralToken?: CollateralToken;
 }
 
 interface CellOrderInfo {
@@ -87,8 +89,9 @@ const EXPECTED_CHAIN_ID = BigInt(process.env.NEXT_PUBLIC_CHAIN_ID || '84532');
 const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL;
 
 export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const { user } = usePrivy();
-  const { wallets } = useWallets();
+  const { activeWallet, address } = useActivePrivyWallet();
+  const { collateralToken } = useMarket();
+  const collateralConfig = getCollateralConfig(collateralToken as CollateralToken);
   const [isEnabled, setIsEnabled] = useState(false);
   const [tradeMode, setTradeMode] = useState<TradeMode>('one-tap-profit');
   const [gridSizeX, setGridSizeX] = useState(1); // 1 candle per column by default
@@ -96,6 +99,7 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
   const [cellOrders, setCellOrders] = useState<Map<string, CellOrderInfo>>(new Map());
   const [betAmount, setBetAmount] = useState('10'); // Default 10 USDC for OneTapProfit
   const [isBinaryTradingEnabled, setIsBinaryTradingEnabled] = useState(false); // Binary trading toggle
+  const traderAddress = address ?? activeWallet?.address;
 
   // Backend integration state
   const [gridSession, setGridSession] = useState<GridSession | null>(null);
@@ -123,13 +127,13 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
    */
   const initializeNonce = async () => {
     try {
-      const embeddedWallet = wallets.find((w) => w.walletClientType === 'privy');
+      const embeddedWallet = activeWallet;
       if (!embeddedWallet) {
         console.warn('Cannot initialize nonce: embedded wallet not found');
         return;
       }
 
-      const traderAddress = embeddedWallet.address;
+      const embeddedTraderAddress = embeddedWallet.address;
       const walletClient = await embeddedWallet.getEthereumProvider();
       if (!walletClient) {
         console.warn('Cannot initialize nonce: wallet client not available');
@@ -156,7 +160,7 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
         method: 'eth_call',
         params: [
           {
-            to: TAP_TO_TRADE_EXECUTOR_ADDRESS,
+            to: collateralConfig.tapToTradeExecutor,
             data: nonceData,
           },
           'latest',
@@ -181,18 +185,18 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
    * Auto re-sign orders that need re-signing (nonce mismatch)
    */
   const checkAndResignOrders = async () => {
-    if (!isEnabled || !gridSession || !user?.wallet?.address) {
+    if (!isEnabled || !gridSession || !traderAddress) {
       return;
     }
 
     try {
       // Get Privy embedded wallet
-      const embeddedWallet = wallets.find((w) => w.walletClientType === 'privy');
+      const embeddedWallet = activeWallet;
       if (!embeddedWallet) {
         return;
       }
 
-      const traderAddress = embeddedWallet.address;
+      const embeddedTraderAddress = embeddedWallet.address;
 
       // Fetch orders that need re-signing
       const response = await fetch(
@@ -210,6 +214,9 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
         if (attemptedResignOrders.current.has(order.id)) {
           continue;
         }
+
+        const orderToken = (order.collateralToken as CollateralToken) || collateralToken;
+        const orderConfig = getCollateralConfig(orderToken);
 
         // Mark as attempted
         attemptedResignOrders.current.add(order.id);
@@ -240,7 +247,7 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
             method: 'eth_call',
             params: [
               {
-                to: TAP_TO_TRADE_EXECUTOR_ADDRESS,
+                to: orderConfig.tapToTradeExecutor,
                 data: nonceData,
               },
               'latest',
@@ -262,7 +269,7 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
                 BigInt(order.collateral),
                 BigInt(order.leverage),
                 freshNonce,
-                TAP_TO_TRADE_EXECUTOR_ADDRESS as `0x${string}`,
+                orderConfig.tapToTradeExecutor as `0x${string}`,
               ],
             ),
           );
@@ -340,7 +347,7 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
         }
       };
     }
-  }, [isEnabled, gridSession, user?.wallet?.address, wallets]);
+  }, [isEnabled, gridSession, traderAddress, activeWallet]);
 
   // Auto-disable tap-to-trade when session expires
   useEffect(() => {
@@ -373,7 +380,7 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
           setIsLoading(true);
 
           // Get Privy embedded wallet
-          const embeddedWallet = wallets.find((w) => w.walletClientType === 'privy');
+          const embeddedWallet = activeWallet;
           const traderAddress = embeddedWallet?.address || gridSession.trader;
 
           await fetch(`${BACKEND_API_URL}/api/grid/cancel-session`, {
@@ -411,19 +418,19 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
         return;
       }
 
-      if (!user?.wallet?.address) {
+      if (!traderAddress) {
         setError('Wallet not connected');
         return;
       }
 
       // Get Privy embedded wallet for tap-to-trade
-      const embeddedWallet = wallets.find((w) => w.walletClientType === 'privy');
+      const embeddedWallet = activeWallet;
       if (!embeddedWallet) {
         setError('Privy embedded wallet not found. Tap-to-trade requires Privy AA wallet.');
         return;
       }
 
-      const traderAddress = embeddedWallet.address;
+      const embeddedTraderAddress = embeddedWallet.address;
 
       setIsLoading(true);
       setError(null);
@@ -445,8 +452,10 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
         // Convert price to 8 decimals (contract format)
         const priceWith8Decimals = Math.round(params.currentPrice * 100000000).toString();
 
-        // Convert margin to base units (6 decimals for USDC)
-        const marginInBaseUnits = (parseFloat(params.margin) * 1000000).toString();
+        // Convert margin to base units (collateral decimals)
+        const marginInBaseUnits = (
+          parseFloat(params.margin) * Math.pow(10, collateralConfig.decimals)
+        ).toString();
 
         // Convert gridSizeY from % to basis points (0.5% = 50 basis points)
         const gridSizeYPercent = Math.round(gridSizeY * 100);
@@ -461,7 +470,7 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            trader: traderAddress,
+            trader: embeddedTraderAddress,
             symbol: params.symbol,
             marginTotal: marginInBaseUnits,
             leverage: params.leverage,
@@ -470,6 +479,7 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
             gridSizeYPercent,
             referenceTime: referenceTimeSnapped,
             referencePrice: priceWith8Decimals,
+            collateralToken,
           }),
         });
 
@@ -497,7 +507,7 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
             }
 
             const newSession = await createSession(
-              traderAddress,
+              embeddedTraderAddress,
               walletClient,
               30 * 60 * 1000, // 30 minutes
             );
@@ -545,9 +555,9 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
                   signature: authSignature as `0x${string}`,
                 });
 
-                if (recovered.toLowerCase() !== traderAddress.toLowerCase()) {
+                if (recovered.toLowerCase() !== embeddedTraderAddress.toLowerCase()) {
                   throw new Error(
-                    `Signature mismatch! Recovered: ${recovered}, Expected: ${traderAddress}`,
+                    `Signature mismatch! Recovered: ${recovered}, Expected: ${embeddedTraderAddress}`,
                   );
                 }
               } catch (verifyErr: any) {
@@ -611,7 +621,7 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
    * Each click creates a new order (accumulate, not toggle)
    */
   const handleCellClick = async (cellX: number, cellY: number) => {
-    if (!isEnabled || !gridSession || !user?.wallet?.address) {
+    if (!isEnabled || !gridSession || !traderAddress) {
       console.warn('Cannot create order: mode not enabled or session not found');
       return;
     }
@@ -652,15 +662,15 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
       const collateralPerOrder = gridSession.marginTotal;
 
       // ALWAYS use Privy embedded wallet for tap-to-trade (gasless with AA)
-      const embeddedWallet = wallets.find((w) => w.walletClientType === 'privy');
+      const embeddedWallet = activeWallet;
 
       if (!embeddedWallet) {
-        console.error('❌ No Privy embedded wallet found in wallets array');
+        console.error('❌ No Privy embedded wallet found');
         throw new Error('Privy embedded wallet not found. Tap-to-trade requires Privy AA wallet.');
       }
 
       // Use embedded wallet address as trader (not the currently active wallet)
-      const traderAddress = embeddedWallet.address;
+      const embeddedTraderAddress = embeddedWallet.address;
 
       // Get wallet provider (EIP-1193)
       const walletClient = await embeddedWallet.getEthereumProvider();
@@ -683,14 +693,14 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
       const nonceData = encodeFunctionData({
         abi: MarketExecutorABI,
         functionName: 'metaNonces',
-        args: [traderAddress as `0x${string}`],
+        args: [embeddedTraderAddress as `0x${string}`],
       });
 
       const nonceResult = await walletClient.request({
         method: 'eth_call',
         params: [
           {
-            to: TAP_TO_TRADE_EXECUTOR_ADDRESS,
+            to: collateralConfig.tapToTradeExecutor,
             data: nonceData,
           },
           'latest',
@@ -706,13 +716,13 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
         encodePacked(
           ['address', 'string', 'bool', 'uint256', 'uint256', 'uint256', 'address'],
           [
-            traderAddress as `0x${string}`,
+            embeddedTraderAddress as `0x${string}`,
             gridSession.symbol,
             isLong,
             BigInt(collateralPerOrder),
             BigInt(gridSession.leverage),
             currentNonce,
-            TAP_TO_TRADE_EXECUTOR_ADDRESS as `0x${string}`,
+            collateralConfig.tapToTradeExecutor as `0x${string}`,
           ],
         ),
       );
@@ -729,7 +739,7 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
           // Fallback to traditional signature if session fails
           const userSignature = await walletClient.request({
             method: 'personal_sign',
-            params: [messageHash, traderAddress],
+            params: [messageHash, embeddedTraderAddress],
           });
           signature = userSignature as string;
           usedSessionKey = false;
@@ -741,7 +751,7 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
         // Fallback: request signature from user (with popup)
         const userSignature = await walletClient.request({
           method: 'personal_sign',
-          params: [messageHash, traderAddress],
+          params: [messageHash, embeddedTraderAddress],
         });
 
         if (!userSignature) {
@@ -758,7 +768,7 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
       const orderData: any = {
         gridSessionId: gridSession.id,
         cellId,
-        trader: traderAddress,
+        trader: embeddedTraderAddress,
         symbol: gridSession.symbol,
         isLong,
         collateral: collateralPerOrder,
@@ -768,6 +778,7 @@ export const TapToTradeProvider: React.FC<{ children: ReactNode }> = ({ children
         endTime,
         nonce: currentNonce.toString(),
         signature,
+        collateralToken: collateralToken,
       };
 
       // ONLY add session key info if we actually used session key for signing

@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useUserPositions } from '@/hooks/data/usePositions';
-import { useEmbeddedWallet } from '@/features/wallet/hooks/useEmbeddedWallet';
+import { useAllUserPositions } from '@/hooks/data/usePositions';
 import { useGaslessClose } from '@/features/trading/hooks/useGaslessClose';
 import { toast } from 'sonner';
 import { useMarket } from '@/features/trading/contexts/MarketContext';
@@ -10,6 +9,7 @@ import TPSLModal from '@/features/trading/components/modals/TPSLModal';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import PositionsTable from '@/features/trading/components/positions/PositionsTable';
 import { Button } from '@/components/ui/button';
+import { CollateralToken } from '@/config/contracts';
 
 // New Components & Hooks
 import OpenOrdersTab from '@/features/trading/components/orders/OpenOrdersTab';
@@ -21,12 +21,13 @@ import { useBinaryOrders } from '@/features/trading/hooks/useBinaryOrders';
 
 export default function BottomTrading() {
   const [openPositionsCount, setOpenPositionsCount] = useState(0);
-  const { positionIds, isLoading: isLoadingIds, refetch: refetchPositions } = useUserPositions();
+  const { setSelectedPosition, selectedPosition, collateralToken } = useMarket();
+  const { positionRefs, isLoading: isLoadingIds, refetch: refetchPositions } =
+    useAllUserPositions();
   const { closePosition, isPending: isClosing } = useGaslessClose();
-  const { setSelectedPosition, selectedPosition } = useMarket();
 
   // Counts for Tabs
-  const { orders: limitOrders } = useUserPendingOrders();
+  const { orders: limitOrders } = useUserPendingOrders(collateralToken);
   const { orders: tapOrders } = useTapToTradeOrders();
   const { orders: binaryOrders } = useBinaryOrders();
 
@@ -42,14 +43,20 @@ export default function BottomTrading() {
     symbol: string;
     entryPrice: number;
     isLong: boolean;
+    collateralToken: CollateralToken;
   } | null>(null);
   const [tpslRefreshTrigger, setTpslRefreshTrigger] = useState(0);
 
   // Map to store position statuses
-  const [positionStatuses, setPositionStatuses] = useState<Map<bigint, boolean>>(new Map());
+  const [positionStatuses, setPositionStatuses] = useState<Map<string, boolean>>(new Map());
 
   // Map to store symbols for positions
-  const [positionSymbols, setPositionSymbols] = useState<Map<bigint, string>>(new Map());
+  const [positionSymbols, setPositionSymbols] = useState<Map<string, string>>(new Map());
+
+  const makePositionKey = useCallback(
+    (positionId: bigint, token: string) => `${token}:${positionId.toString()}`,
+    [],
+  );
 
   // Update open positions count when statuses change
   useEffect(() => {
@@ -57,10 +64,14 @@ export default function BottomTrading() {
     setOpenPositionsCount(count);
   }, [positionStatuses]);
 
-  const handleClosePosition = async (positionId: bigint, symbol: string) => {
+  const handleClosePosition = async (
+    positionId: bigint,
+    symbol: string,
+    collateralToken: CollateralToken,
+  ) => {
     if (!confirm(`Are you sure you want to close position #${positionId}?`)) return;
     try {
-      await closePosition({ positionId, symbol });
+      await closePosition({ positionId, symbol, collateralToken });
       setTimeout(() => refetchPositions?.(), 1000);
     } catch (error) {}
   };
@@ -70,8 +81,9 @@ export default function BottomTrading() {
     symbol: string,
     entryPrice: number,
     isLong: boolean,
+    collateralToken: CollateralToken,
   ) => {
-    setSelectedPosition({ positionId, symbol, entryPrice, isLong });
+    setSelectedPosition({ positionId, symbol, entryPrice, isLong, collateralToken });
   };
 
   const handleTPSLModalOpen = (
@@ -80,6 +92,7 @@ export default function BottomTrading() {
     symbol: string,
     entryPrice: number,
     isLong: boolean,
+    collateralToken: CollateralToken,
   ) => {
     setTpslModalData({
       positionId: Number(positionId),
@@ -87,6 +100,7 @@ export default function BottomTrading() {
       symbol,
       entryPrice,
       isLong,
+      collateralToken,
     });
     setTpslModalOpen(true);
   };
@@ -100,21 +114,22 @@ export default function BottomTrading() {
   };
 
   const handlePositionDataLoaded = useCallback(
-    (positionId: bigint, isOpen: boolean, symbol: string) => {
+    (positionId: bigint, isOpen: boolean, symbol: string, token: CollateralToken) => {
+      const key = makePositionKey(positionId, token);
       setPositionStatuses((prev) => {
-        if (prev.get(positionId) === isOpen) return prev;
+        if (prev.get(key) === isOpen) return prev;
         const newMap = new Map(prev);
-        newMap.set(positionId, isOpen);
+        newMap.set(key, isOpen);
         return newMap;
       });
       setPositionSymbols((prev) => {
-        if (prev.get(positionId) === symbol) return prev;
+        if (prev.get(key) === symbol) return prev;
         const newMap = new Map(prev);
-        newMap.set(positionId, symbol);
+        newMap.set(key, symbol);
         return newMap;
       });
     },
-    [],
+    [makePositionKey],
   );
 
   const executeCloseAll = async () => {
@@ -128,14 +143,19 @@ export default function BottomTrading() {
     toast.loading(`Closing all positions...`, { id: 'close-all' });
 
     let successCount = 0;
-    for (const id of openPositionIds) {
-      const symbol = positionSymbols.get(id);
-      if (symbol) {
-        try {
-          await closePosition({ positionId: id, symbol });
-          successCount++;
-        } catch (e) {}
-      }
+    for (const key of openPositionIds) {
+      const symbol = positionSymbols.get(key);
+      if (!symbol) continue;
+      const [token, id] = key.split(':');
+      if (!id) continue;
+      try {
+        await closePosition({
+          positionId: BigInt(id),
+          symbol,
+          collateralToken: token === 'IDRX' ? 'IDRX' : 'USDC',
+        });
+        successCount++;
+      } catch (e) {}
     }
 
     toast.dismiss('close-all');
@@ -269,11 +289,18 @@ export default function BottomTrading() {
               className="h-full m-0 data-[state=inactive]:hidden flex flex-col"
             >
               <PositionsTable
-                positionIds={positionIds}
+                positions={positionRefs}
                 isLoading={isLoadingIds}
                 openPositionsCount={openPositionsCount}
                 isClosing={isClosing}
-                selectedPositionId={selectedPosition?.positionId}
+                selectedPositionKey={
+                  selectedPosition?.positionId
+                    ? makePositionKey(
+                        selectedPosition.positionId,
+                        selectedPosition.collateralToken ?? collateralToken,
+                      )
+                    : undefined
+                }
                 tpslRefreshTrigger={tpslRefreshTrigger}
                 onClosePosition={handleClosePosition}
                 onPositionClick={handlePositionClick}
@@ -317,6 +344,7 @@ export default function BottomTrading() {
           symbol={tpslModalData.symbol}
           entryPrice={tpslModalData.entryPrice}
           isLong={tpslModalData.isLong}
+          collateralToken={tpslModalData.collateralToken}
         />
       )}
     </>

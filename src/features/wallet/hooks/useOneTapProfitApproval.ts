@@ -1,12 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { usePrivy, useWallets } from '@privy-io/react-auth';
+import { usePrivy } from '@privy-io/react-auth';
 import { createWalletClient, custom, encodeFunctionData, parseUnits } from 'viem';
 import { baseSepolia } from 'viem/chains';
-
-const USDC_ADDRESS = process.env.NEXT_PUBLIC_USDC_TOKEN_ADDRESS as `0x${string}`;
-const ONE_TAP_PROFIT_ADDRESS = process.env.NEXT_PUBLIC_ONE_TAP_PROFIT_ADDRESS as `0x${string}`;
+import { STABILITY_FUND_ADDRESS, USDC_ADDRESS } from '@/config/contracts';
+import { useActivePrivyWallet } from '@/features/wallet/hooks/useActivePrivyWallet';
 
 const USDC_ABI = [
   {
@@ -33,12 +32,12 @@ const USDC_ABI = [
 
 export const useOneTapProfitApproval = () => {
   const { authenticated } = usePrivy();
-  const { wallets } = useWallets();
+  const { activeWallet } = useActivePrivyWallet();
   const [allowance, setAllowance] = useState<bigint | null>(null);
   const [isPending, setIsPending] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  const embeddedWallet = wallets.find((w) => w.walletClientType === 'privy');
+  const embeddedWallet = activeWallet;
 
   // Check current allowance
   const checkAllowance = useCallback(async () => {
@@ -55,7 +54,7 @@ export const useOneTapProfitApproval = () => {
       const allowanceData = encodeFunctionData({
         abi: USDC_ABI,
         functionName: 'allowance',
-        args: [userAddress, ONE_TAP_PROFIT_ADDRESS],
+        args: [userAddress, STABILITY_FUND_ADDRESS],
       });
 
       const result = await ethereumProvider.request({
@@ -106,7 +105,7 @@ export const useOneTapProfitApproval = () => {
         const approveData = encodeFunctionData({
           abi: USDC_ABI,
           functionName: 'approve',
-          args: [ONE_TAP_PROFIT_ADDRESS, BigInt(amount)],
+          args: [STABILITY_FUND_ADDRESS, BigInt(amount)],
         });
 
         const txHash = await walletClient.sendTransaction({

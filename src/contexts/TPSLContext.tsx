@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { BACKEND_API_URL } from '@/config/contracts';
+import { useMarket } from '@/features/trading/contexts/MarketContext';
 
 export interface TPSLConfig {
   positionId: number;
@@ -25,6 +26,7 @@ interface TPSLContextType {
 const TPSLContext = createContext<TPSLContextType | undefined>(undefined);
 
 export function TPSLProvider({ children }: { children: ReactNode }) {
+  const { collateralToken } = useMarket();
   const [configs, setConfigs] = useState<Record<number, TPSLConfig>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [lastFetch, setLastFetch] = useState(0);
@@ -37,7 +39,9 @@ export function TPSLProvider({ children }: { children: ReactNode }) {
 
     setIsLoading(true);
     try {
-      const response = await fetch(`${BACKEND_API_URL}/api/tpsl/all`);
+      const response = await fetch(
+        `${BACKEND_API_URL}/api/tpsl/all?collateralToken=${collateralToken}`,
+      );
       const data = await response.json();
 
       if (response.ok && data.success && Array.isArray(data.data)) {
@@ -59,7 +63,7 @@ export function TPSLProvider({ children }: { children: ReactNode }) {
   // Initial fetch
   useEffect(() => {
     fetchAll();
-  }, []);
+  }, [collateralToken]);
 
   // Listen to tpsl-updated events for real-time updates
   useEffect(() => {

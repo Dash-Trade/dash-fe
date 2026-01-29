@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { usePrivy, useWallets } from '@privy-io/react-auth';
-import { parseUnits, formatUnits } from 'viem';
-import { USDC_ADDRESS, TAP_TO_TRADE_EXECUTOR_ADDRESS, USDC_DECIMALS } from '@/config/contracts';
+import { usePrivy } from '@privy-io/react-auth';
+import { parseUnits } from 'viem';
+import { STABILITY_FUND_ADDRESS, USDC_ADDRESS, USDC_DECIMALS } from '@/config/contracts';
+import { useActivePrivyWallet } from '@/features/wallet/hooks/useActivePrivyWallet';
 
 const USDC_ABI = [
   {
@@ -27,34 +28,31 @@ const USDC_ABI = [
 ];
 
 /**
- * Hook for USDC approval specifically for TapToTradeExecutor contract
+ * Hook for USDC approval via StabilityFund (single approval target)
  */
 export function useTapToTradeApproval() {
   const { authenticated } = usePrivy();
-  const { wallets, ready: walletsReady } = useWallets();
+  const { activeWallet } = useActivePrivyWallet();
   const [allowance, setAllowance] = useState<bigint | null>(null);
   const [isPending, setIsPending] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
   /**
-   * Fetch current USDC allowance for TapToTradeExecutor
+   * Fetch current USDC allowance for StabilityFund
    */
   const fetchAllowance = useCallback(async () => {
-    if (!authenticated || !walletsReady) return;
+    if (!authenticated || !activeWallet) return;
 
     try {
-      const embeddedWallet = wallets.find((w) => w.walletClientType === 'privy');
-      if (!embeddedWallet) return;
-
-      const walletClient = await embeddedWallet.getEthereumProvider();
+      const walletClient = await activeWallet.getEthereumProvider();
       if (!walletClient) return;
 
-      const userAddress = embeddedWallet.address;
+      const userAddress = activeWallet.address;
 
       // Encode allowance call
       const allowanceData = `0xdd62ed3e${userAddress
         .slice(2)
-        .padStart(64, '0')}${TAP_TO_TRADE_EXECUTOR_ADDRESS.slice(2).padStart(64, '0')}`;
+        .padStart(64, '0')}${STABILITY_FUND_ADDRESS.slice(2).padStart(64, '0')}`;
 
       const result = await walletClient.request({
         method: 'eth_call',
@@ -72,32 +70,27 @@ export function useTapToTradeApproval() {
     } catch (error) {
       setAllowance(BigInt(0));
     }
-  }, [authenticated, walletsReady, wallets]);
+  }, [authenticated, activeWallet]);
 
   /**
-   * Approve USDC for TapToTradeExecutor
+   * Approve USDC for StabilityFund
    */
   const approve = useCallback(
     async (amount: string) => {
-      if (!authenticated || !walletsReady) {
+      if (!authenticated || !activeWallet) {
         throw new Error('Wallet not ready');
-      }
-
-      const embeddedWallet = wallets.find((w) => w.walletClientType === 'privy');
-      if (!embeddedWallet) {
-        throw new Error('Embedded wallet not found');
       }
 
       setIsPending(true);
 
       try {
-        const walletClient = await embeddedWallet.getEthereumProvider();
+        const walletClient = await activeWallet.getEthereumProvider();
         if (!walletClient) {
           throw new Error('Wallet client not available');
         }
 
         // Encode approve function call
-        const approveData = `0x095ea7b3${TAP_TO_TRADE_EXECUTOR_ADDRESS.slice(2).padStart(
+        const approveData = `0x095ea7b3${STABILITY_FUND_ADDRESS.slice(2).padStart(
           64,
           '0',
         )}${BigInt(amount).toString(16).padStart(64, '0')}`;
@@ -106,7 +99,7 @@ export function useTapToTradeApproval() {
           method: 'eth_sendTransaction',
           params: [
             {
-              from: embeddedWallet.address,
+              from: activeWallet.address,
               to: USDC_ADDRESS,
               data: approveData,
             },
@@ -143,7 +136,7 @@ export function useTapToTradeApproval() {
         setIsPending(false);
       }
     },
-    [authenticated, walletsReady, wallets, fetchAllowance],
+    [authenticated, activeWallet, fetchAllowance],
   );
 
   /**
@@ -158,10 +151,10 @@ export function useTapToTradeApproval() {
 
   // Fetch allowance on mount and when dependencies change
   useEffect(() => {
-    if (authenticated && walletsReady) {
+    if (authenticated && activeWallet) {
       fetchAllowance();
     }
-  }, [authenticated, walletsReady, fetchAllowance]);
+  }, [authenticated, activeWallet, fetchAllowance]);
 
   return {
     allowance,

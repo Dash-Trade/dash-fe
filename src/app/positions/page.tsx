@@ -2,38 +2,45 @@
 
 import { useState, useEffect } from 'react';
 import { formatMarketPair } from '@/features/trading/lib/marketUtils';
-import { usePosition } from '@/hooks/data/usePositions';
+import { PositionRef, usePosition } from '@/hooks/data/usePositions';
 import { usePrice } from '@/hooks/data/usePrices';
 import { useGaslessClose } from '@/features/trading/hooks/useGaslessClose';
 import { formatUnits } from 'viem';
 import { toast } from 'sonner';
 import PageLayout from '@/components/layout/PageLayout';
 import TPSLModal from '@/features/trading/components/modals/TPSLModal';
-import { useTPSLContext } from '@/contexts/TPSLContext';
 import { useReadContract } from 'wagmi';
-import { POSITION_MANAGER_ADDRESS } from '@/config/contracts';
+import {
+  CollateralToken,
+  POSITION_MANAGER_ADDRESS,
+  POSITION_MANAGER_IDRX_ADDRESS,
+  isZeroAddress,
+} from '@/config/contracts';
 import PositionManagerABI from '@/contracts/abis/PositionManager.json';
 import { ALL_MARKETS } from '@/features/trading/constants/markets';
 
 // Component to display individual position
 const PositionRow = ({
   positionId,
+  collateralToken,
   onClose,
   onTPSLClick,
   onPositionLoaded,
 }: {
   positionId: bigint;
-  onClose: (positionId: bigint, symbol: string) => void;
+  collateralToken: CollateralToken;
+  onClose: (positionId: bigint, symbol: string, collateralToken: CollateralToken) => void;
   onTPSLClick: (
     positionId: bigint,
     trader: string,
     symbol: string,
     entryPrice: number,
     isLong: boolean,
+    collateralToken: CollateralToken,
   ) => void;
-  onPositionLoaded?: (positionId: bigint, isOpen: boolean) => void;
+  onPositionLoaded?: (positionId: bigint, isOpen: boolean, token: CollateralToken) => void;
 }) => {
-  const { position, isLoading } = usePosition(positionId);
+  const { position, isLoading } = usePosition(positionId, collateralToken);
 
   // Use shared price hook - all positions with same symbol share same price
   const { price: priceData, isLoading: loadingPrice } = usePrice(position?.symbol);
@@ -42,9 +49,9 @@ const PositionRow = ({
   // Report position status when loaded
   useEffect(() => {
     if (!isLoading && position && onPositionLoaded) {
-      onPositionLoaded(positionId, position.status === 0);
+      onPositionLoaded(positionId, position.status === 0, collateralToken);
     }
-  }, [isLoading, position, positionId, onPositionLoaded]);
+  }, [isLoading, position, positionId, collateralToken, onPositionLoaded]);
 
   if (isLoading) {
     return null;
@@ -95,7 +102,14 @@ const PositionRow = ({
   // Handle TP/SL button click
   const handleTPSLClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onTPSLClick(position.id, position.trader, position.symbol, entryPrice, position.isLong);
+    onTPSLClick(
+      position.id,
+      position.trader,
+      position.symbol,
+      entryPrice,
+      position.isLong,
+      collateralToken,
+    );
   };
 
   return (
@@ -137,19 +151,24 @@ const PositionRow = ({
 
       {/* Margin */}
       <td className="px-4 py-3">
-        <span className="text-white">{collateral.toFixed(2)} USDC</span>
+        <span className="text-white">
+          {collateral.toFixed(2)} {collateralToken}
+        </span>
       </td>
 
       {/* Size */}
       <td className="px-4 py-3">
-        <span className="text-white">{size.toFixed(2)} USDC</span>
+        <span className="text-white">
+          {size.toFixed(2)} {collateralToken}
+        </span>
       </td>
 
       {/* Net PnL */}
       <td className="px-4 py-3">
         <div className="flex flex-col">
           <span className={`font-semibold ${pnlColor}`}>
-            {unrealizedPnl >= 0 ? '+' : ''}${unrealizedPnl.toFixed(2)}
+            {unrealizedPnl >= 0 ? '+' : ''}
+            {unrealizedPnl.toFixed(2)} {collateralToken}
           </span>
           {currentPrice && (
             <span className={`text-xs ${pnlColor}`}>
@@ -175,7 +194,7 @@ const PositionRow = ({
 };
 
 function PositionsPageContent() {
-  const { closePosition, isPending: isClosing, txHash } = useGaslessClose();
+  const { closePosition, isPending: isClosing } = useGaslessClose();
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
@@ -187,11 +206,12 @@ function PositionsPageContent() {
     symbol: string;
     entryPrice: number;
     isLong: boolean;
+    collateralToken: CollateralToken;
   } | null>(null);
   const [tpslRefreshTrigger, setTpslRefreshTrigger] = useState(0);
 
   // Track open positions
-  const [openPositionIds, setOpenPositionIds] = useState<bigint[]>([]);
+  const [openPositionIds, setOpenPositionIds] = useState<PositionRef[]>([]);
 
   // Get the next position ID to know how many positions exist
   const { data: nextPositionId, isLoading: isLoadingNextId } = useReadContract({
@@ -202,26 +222,51 @@ function PositionsPageContent() {
       refetchInterval: 5000,
     },
   });
+  const { data: nextPositionIdIdrx, isLoading: isLoadingNextIdIdrx } = useReadContract({
+    address: POSITION_MANAGER_IDRX_ADDRESS,
+    abi: PositionManagerABI,
+    functionName: 'nextPositionId',
+    query: {
+      enabled: !isZeroAddress(POSITION_MANAGER_IDRX_ADDRESS),
+      refetchInterval: 5000,
+    },
+  });
 
   // Generate array of all position IDs (newest first - descending order)
-  const allPositionIds = nextPositionId
-    ? Array.from({ length: Number(nextPositionId) - 1 }, (_, i) =>
-        BigInt(Number(nextPositionId) - 1 - i),
-      )
-    : [];
+  const buildPositionRefs = (nextId: unknown, token: CollateralToken): PositionRef[] => {
+    if (!nextId) return [];
+    const count = Number(nextId) - 1;
+    if (count <= 0) return [];
+    return Array.from({ length: count }, (_, i) => ({
+      id: BigInt(count - i),
+      collateralToken: token,
+    }));
+  };
+
+  const allPositionIds = [
+    ...buildPositionRefs(nextPositionId, 'USDC'),
+    ...buildPositionRefs(nextPositionIdIdrx, 'IDRX'),
+  ];
 
   // Handle position loaded - track if position is open
-  const handlePositionLoaded = (positionId: bigint, isOpen: boolean) => {
+  const handlePositionLoaded = (
+    positionId: bigint,
+    isOpen: boolean,
+    token: CollateralToken,
+  ) => {
     setOpenPositionIds((prev) => {
+      const key = `${token}:${positionId.toString()}`;
       if (isOpen) {
         // Add to list if not already there
-        if (!prev.includes(positionId)) {
-          return [...prev, positionId].sort((a, b) => Number(b) - Number(a)); // Sort descending (newest first)
+        if (!prev.some((p) => `${p.collateralToken}:${p.id.toString()}` === key)) {
+          return [...prev, { id: positionId, collateralToken: token }].sort(
+            (a, b) => Number(b.id) - Number(a.id),
+          ); // Sort descending (newest first)
         }
         return prev;
       } else {
         // Remove from list if closed
-        return prev.filter((id) => id !== positionId);
+        return prev.filter((p) => `${p.collateralToken}:${p.id.toString()}` !== key);
       }
     });
   };
@@ -257,6 +302,7 @@ function PositionsPageContent() {
     symbol: string,
     entryPrice: number,
     isLong: boolean,
+    collateralToken: CollateralToken,
   ) => {
     setTpslModalData({
       positionId: Number(positionId),
@@ -264,6 +310,7 @@ function PositionsPageContent() {
       symbol,
       entryPrice,
       isLong,
+      collateralToken,
     });
     setTpslModalOpen(true);
   };
@@ -276,7 +323,11 @@ function PositionsPageContent() {
   };
 
   // Handle close position - GASLESS via backend
-  const handleClosePosition = async (positionId: bigint, symbol: string) => {
+  const handleClosePosition = async (
+    positionId: bigint,
+    symbol: string,
+    collateralToken: CollateralToken,
+  ) => {
     if (isClosing) return;
 
     try {
@@ -285,6 +336,7 @@ function PositionsPageContent() {
       await closePosition({
         positionId,
         symbol,
+        collateralToken,
       });
 
       toast.dismiss('close-position');
@@ -293,7 +345,7 @@ function PositionsPageContent() {
     }
   };
 
-  const isLoading = isLoadingNextId;
+  const isLoading = isLoadingNextId || isLoadingNextIdIdrx;
 
   return (
     <>
@@ -336,10 +388,11 @@ function PositionsPageContent() {
                 </tr>
               </thead>
               <tbody>
-                {currentPositionIds.map((positionId) => (
+                {currentPositionIds.map((positionRef) => (
                   <PositionRow
-                    key={`${positionId.toString()}-${tpslRefreshTrigger}`}
-                    positionId={positionId}
+                    key={`${positionRef.collateralToken}:${positionRef.id.toString()}-${tpslRefreshTrigger}`}
+                    positionId={positionRef.id}
+                    collateralToken={positionRef.collateralToken}
                     onClose={handleClosePosition}
                     onTPSLClick={handleTPSLModalOpen}
                     onPositionLoaded={handlePositionLoaded}
@@ -353,10 +406,11 @@ function PositionsPageContent() {
         {/* Hidden component to load all positions and track which are open */}
         {!isLoading && (
           <div className="hidden">
-            {allPositionIds.map((positionId) => (
+            {allPositionIds.map((positionRef) => (
               <PositionRow
-                key={`loader-${positionId.toString()}`}
-                positionId={positionId}
+                key={`loader-${positionRef.collateralToken}:${positionRef.id.toString()}`}
+                positionId={positionRef.id}
+                collateralToken={positionRef.collateralToken}
                 onClose={handleClosePosition}
                 onTPSLClick={handleTPSLModalOpen}
                 onPositionLoaded={handlePositionLoaded}
@@ -440,6 +494,7 @@ function PositionsPageContent() {
           symbol={tpslModalData.symbol}
           entryPrice={tpslModalData.entryPrice}
           isLong={tpslModalData.isLong}
+          collateralToken={tpslModalData.collateralToken}
         />
       )}
     </>

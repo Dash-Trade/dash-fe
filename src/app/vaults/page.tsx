@@ -7,14 +7,20 @@ import { usePrivy, useWallets } from '@privy-io/react-auth';
 import { usePublicClient } from 'wagmi';
 import { ethers } from 'ethers';
 import { parseUnits, formatUnits } from 'viem';
-import usePoolData from '@/hooks/data/usePoolData';
 import PageLayout from '@/components/layout/PageLayout';
-
-const USDC_ADDRESS = process.env.NEXT_PUBLIC_USDC_TOKEN_ADDRESS as `0x${string}`;
-const VAULT_POOL_ADDRESS = process.env.NEXT_PUBLIC_VAULT_POOL_ADDRESS as `0x${string}`;
+import {
+  CollateralToken,
+  IDRX_ADDRESS,
+  STABILITY_FUND_ADDRESS,
+  STABILITY_FUND_IDRX_ADDRESS,
+  USDC_ADDRESS,
+  VAULT_POOL_ADDRESS,
+  VAULT_POOL_IDRX_ADDRESS,
+  isZeroAddress,
+} from '@/config/contracts';
 const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 84532);
 
-const usdcABI = [
+const erc20ABI = [
   {
     inputs: [
       { internalType: 'address', name: 'owner', type: 'address' },
@@ -154,8 +160,88 @@ interface VaultData {
   percentOwned: string;
 }
 
+interface VaultSnapshot {
+  tokenBalance: string;
+  tvlUsd: string;
+  tvlUsdValue: number;
+  stabilityTokenBalance: string;
+  stabilityUsd: string;
+  userTokenBalance: string;
+  userUsd: string;
+  percentOwned: string;
+  lockPeriodSec: number;
+  earlyExitFee: number;
+  apyBps: number;
+  userUnlockTime: number | null;
+}
+
+const DEFAULT_SNAPSHOT: VaultSnapshot = {
+  tokenBalance: '0.00',
+  tvlUsd: '$0.00',
+  tvlUsdValue: 0,
+  stabilityTokenBalance: '0.00',
+  stabilityUsd: '$0.00',
+  userTokenBalance: '0.00',
+  userUsd: '$0',
+  percentOwned: '0%',
+  lockPeriodSec: 0,
+  earlyExitFee: 0,
+  apyBps: 0,
+  userUnlockTime: null,
+};
+
+type VaultConfig = {
+  token: CollateralToken;
+  name: string;
+  icon: string;
+  tokenAddress: `0x${string}`;
+  vaultAddress: `0x${string}`;
+  stabilityFundAddress: `0x${string}`;
+};
+
+const VAULTS_BASE: VaultConfig[] = [
+  {
+    token: 'USDC',
+    name: 'USD Coin',
+    icon: '/icons/usdc.png',
+    tokenAddress: USDC_ADDRESS,
+    vaultAddress: VAULT_POOL_ADDRESS,
+    stabilityFundAddress: STABILITY_FUND_ADDRESS,
+  },
+  {
+    token: 'IDRX',
+    name: 'IDRX',
+    icon: '/icons/idrx.png',
+    tokenAddress: IDRX_ADDRESS,
+    vaultAddress: VAULT_POOL_IDRX_ADDRESS,
+    stabilityFundAddress: STABILITY_FUND_IDRX_ADDRESS,
+  },
+];
+
+const VAULTS = VAULTS_BASE.filter(
+  (vault) =>
+    !isZeroAddress(vault.tokenAddress) &&
+    !isZeroAddress(vault.vaultAddress) &&
+    !isZeroAddress(vault.stabilityFundAddress),
+);
+
+const IDRX_PER_USD = 16700;
+
+const formatTokenAmount = (value: number): string => {
+  return value.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+};
+
+const toUsdValue = (value: number, token: CollateralToken): number => {
+  if (token === 'IDRX') {
+    return value / IDRX_PER_USD;
+  }
+  return value;
+};
+
 export default function VaultsPage() {
-  const poolData = usePoolData();
   const { ready, authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const publicClient = usePublicClient();
@@ -167,13 +253,8 @@ export default function VaultsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [userVaultBalance, setUserVaultBalance] = useState<string>('0');
-  const [userVaultBalanceUSD, setUserVaultBalanceUSD] = useState<string>('$0');
-  const [percentOwned, setPercentOwned] = useState<string>('0%');
-  const [lockPeriodSec, setLockPeriodSec] = useState<number>(0);
-  const [earlyExitFee, setEarlyExitFee] = useState<number>(0);
-  const [apyBps, setApyBps] = useState<number>(0);
-  const [userUnlockTime, setUserUnlockTime] = useState<number | null>(null);
+  const [selectedToken, setSelectedToken] = useState<CollateralToken>('USDC');
+  const [vaultSnapshots, setVaultSnapshots] = useState<Record<string, VaultSnapshot>>({});
 
   const embeddedWallet = useMemo(
     () => wallets.find((w) => w.walletClientType === 'privy' || w.connectorType === 'embedded'),
@@ -200,148 +281,186 @@ export default function VaultsPage() {
     );
   };
 
-  const formattedTVL = poolData.vaultTVL;
+  const fetchVaultSnapshot = useCallback(
+    async (
+      vaultAddress: `0x${string}`,
+      tokenAddress: `0x${string}`,
+      stabilityFundAddress: `0x${string}`,
+      tokenSymbol: CollateralToken,
+      userAddress?: `0x${string}`,
+    ): Promise<VaultSnapshot> => {
+      if (!publicClient) return DEFAULT_SNAPSHOT;
 
-  const fetchUserVaultData = useCallback(async () => {
-    if (!publicClient || !ready || !authenticated || !embeddedWallet) {
-      setUserVaultBalance('0');
-      setUserVaultBalanceUSD('$0');
-      setPercentOwned('0%');
-      setUserUnlockTime(null);
-      return;
-    }
+      const [
+        totalAssets,
+        totalSupply,
+        virtualSupply,
+        lockP,
+        feeBps,
+        apy,
+        stabilityBalance,
+      ] = await Promise.all([
+        publicClient.readContract({
+          address: vaultAddress,
+          abi: vaultABI,
+          functionName: 'totalAssets',
+        }) as Promise<bigint>,
+        publicClient.readContract({
+          address: vaultAddress,
+          abi: vaultABI,
+          functionName: 'totalSupply',
+        }) as Promise<bigint>,
+        publicClient.readContract({
+          address: vaultAddress,
+          abi: vaultABI,
+          functionName: 'virtualSupply',
+        }) as Promise<bigint>,
+        publicClient.readContract({
+          address: vaultAddress,
+          abi: vaultABI,
+          functionName: 'lockPeriod',
+        }) as Promise<bigint>,
+        publicClient.readContract({
+          address: vaultAddress,
+          abi: vaultABI,
+          functionName: 'earlyExitFeeBps',
+        }) as Promise<bigint>,
+        publicClient.readContract({
+          address: vaultAddress,
+          abi: vaultABI,
+          functionName: 'apyEstimateBps',
+        }) as Promise<bigint>,
+        publicClient.readContract({
+          address: tokenAddress,
+          abi: erc20ABI,
+          functionName: 'balanceOf',
+          args: [stabilityFundAddress],
+        }) as Promise<bigint>,
+      ]);
 
-    try {
-      const provider = new ethers.BrowserProvider(await embeddedWallet.getEthereumProvider());
-      const signer = await provider.getSigner();
-      const userAddress = await signer.getAddress();
+      let userBalance = '0.00';
+      let userBalanceUSD = '$0';
+      let percentOwned = '0%';
+      let userUnlockTime: number | null = null;
 
-      const [userShares, totalSupply, virtualSupply, lockP, feeBps, apy, unlockTs] =
-        await Promise.all([
+      if (userAddress) {
+        const [userShares, unlockTs] = await Promise.all([
           publicClient.readContract({
-            address: VAULT_POOL_ADDRESS,
+            address: vaultAddress,
             abi: vaultABI,
             functionName: 'balanceOf',
-            args: [userAddress as `0x${string}`],
+            args: [userAddress],
           }) as Promise<bigint>,
           publicClient.readContract({
-            address: VAULT_POOL_ADDRESS,
-            abi: vaultABI,
-            functionName: 'totalSupply',
-          }) as Promise<bigint>,
-          publicClient.readContract({
-            address: VAULT_POOL_ADDRESS,
-            abi: vaultABI,
-            functionName: 'virtualSupply',
-          }) as Promise<bigint>,
-          publicClient.readContract({
-            address: VAULT_POOL_ADDRESS,
-            abi: vaultABI,
-            functionName: 'lockPeriod',
-          }) as Promise<bigint>,
-          publicClient.readContract({
-            address: VAULT_POOL_ADDRESS,
-            abi: vaultABI,
-            functionName: 'earlyExitFeeBps',
-          }) as Promise<bigint>,
-          publicClient.readContract({
-            address: VAULT_POOL_ADDRESS,
-            abi: vaultABI,
-            functionName: 'apyEstimateBps',
-          }) as Promise<bigint>,
-          publicClient.readContract({
-            address: VAULT_POOL_ADDRESS,
+            address: vaultAddress,
             abi: vaultABI,
             functionName: 'unlockTime',
-            args: [userAddress as `0x${string}`],
+            args: [userAddress],
           }) as Promise<bigint>,
         ]);
 
-      const userAssets =
-        userShares > 0n
-          ? ((await publicClient.readContract({
-              address: VAULT_POOL_ADDRESS,
-              abi: vaultABI,
-              functionName: 'convertToAssets',
-              args: [userShares],
-            })) as bigint)
-          : 0n;
+        const userAssets =
+          userShares > 0n
+            ? ((await publicClient.readContract({
+                address: vaultAddress,
+                abi: vaultABI,
+                functionName: 'convertToAssets',
+                args: [userShares],
+              })) as bigint)
+            : 0n;
 
-      const userAssetsNumber = Number(formatUnits(userAssets, 6));
-      setUserVaultBalance(userAssetsNumber.toFixed(2));
-      setUserVaultBalanceUSD(`$${userAssetsNumber.toFixed(2)}`);
+        const userAssetsNumber = Number(formatUnits(userAssets, 6));
+        const userUsdValue = toUsdValue(userAssetsNumber, tokenSymbol);
+        userBalance = formatTokenAmount(userAssetsNumber);
+        userBalanceUSD = formatCurrency(userUsdValue);
 
-      const effectiveSupply = totalSupply + virtualSupply;
-      // percent with 6 decimal places
-      const percentScaled =
-        effectiveSupply > 0n ? (userShares * 100_000_000n) / effectiveSupply : 0n; // percent * 1e6
-      const percent = Number(percentScaled) / 1_000_000;
-      const percentDisplay =
-        percent < 0.000001 && percent > 0 ? '<0.000001%' : `${percent.toFixed(6)}%`;
-      setPercentOwned(percentDisplay);
-      setLockPeriodSec(Number(lockP));
-      setEarlyExitFee(Number(feeBps) / 100);
-      setApyBps(Number(apy));
-      setUserUnlockTime(Number(unlockTs));
-    } catch (err) {
-      setUserVaultBalance('0');
-      setUserVaultBalanceUSD('$0');
-      setPercentOwned('0%');
-      setUserUnlockTime(null);
-    }
-  }, [authenticated, embeddedWallet, publicClient, ready]);
+        const effectiveSupply = totalSupply + virtualSupply;
+        const percentScaled =
+          effectiveSupply > 0n ? (userShares * 100_000_000n) / effectiveSupply : 0n;
+        const percent = Number(percentScaled) / 1_000_000;
+        percentOwned =
+          percent < 0.000001 && percent > 0 ? '<0.000001%' : `${percent.toFixed(6)}%`;
+        userUnlockTime = Number(unlockTs);
+      }
 
-  useEffect(() => {
-    fetchUserVaultData();
-  }, [fetchUserVaultData, txHash]);
+      const vaultTokenValue = Number(formatUnits(totalAssets, 6));
+      const stabilityTokenValue = Number(formatUnits(stabilityBalance, 6));
+      const vaultUsdValue = toUsdValue(vaultTokenValue, tokenSymbol);
+      const stabilityUsdValue = toUsdValue(stabilityTokenValue, tokenSymbol);
 
-  // Fetch global vault config even if user not connected
-  useEffect(() => {
-    const fetchConfig = async () => {
-      if (!publicClient) return;
-      try {
-        const [lockP, feeBps, apy] = await Promise.all([
-          publicClient.readContract({
-            address: VAULT_POOL_ADDRESS,
-            abi: vaultABI,
-            functionName: 'lockPeriod',
-          }) as Promise<bigint>,
-          publicClient.readContract({
-            address: VAULT_POOL_ADDRESS,
-            abi: vaultABI,
-            functionName: 'earlyExitFeeBps',
-          }) as Promise<bigint>,
-          publicClient.readContract({
-            address: VAULT_POOL_ADDRESS,
-            abi: vaultABI,
-            functionName: 'apyEstimateBps',
-          }) as Promise<bigint>,
-        ]);
-        setLockPeriodSec(Number(lockP));
-        setEarlyExitFee(Number(feeBps) / 100);
-        setApyBps(Number(apy));
-      } catch (err) {}
-    };
-    fetchConfig();
-  }, [publicClient, txHash]);
-
-  const vaultData: VaultData[] = [
-    {
-      collateral: {
-        name: 'USD Coin',
-        symbol: 'USDC',
-        icon: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png',
-      },
-      balance: formattedTVL,
-      balanceUSD: formattedTVL,
-      feeAPY: `${(apyBps / 100).toFixed(2)}%`,
-      stabilityFunds: poolData.stabilityBuffer,
-      stabilityFundsUSD: poolData.stabilityBuffer,
-      yourBalance: userVaultBalance,
-      yourBalanceUSD: userVaultBalanceUSD,
-      percentOwned: percentOwned,
+      return {
+        tokenBalance: formatTokenAmount(vaultTokenValue),
+        tvlUsd: formatCurrency(vaultUsdValue),
+        tvlUsdValue: vaultUsdValue,
+        stabilityTokenBalance: formatTokenAmount(stabilityTokenValue),
+        stabilityUsd: formatCurrency(stabilityUsdValue),
+        userTokenBalance: userBalance,
+        userUsd: userBalanceUSD,
+        percentOwned,
+        lockPeriodSec: Number(lockP),
+        earlyExitFee: Number(feeBps) / 100,
+        apyBps: Number(apy),
+        userUnlockTime,
+      };
     },
-  ];
+    [publicClient],
+  );
+
+  const fetchVaultData = useCallback(async () => {
+    if (!publicClient) return;
+
+    const userAddress =
+      ready && authenticated && embeddedWallet
+        ? (embeddedWallet.address as `0x${string}`)
+        : undefined;
+
+    try {
+      const entries = await Promise.all(
+        VAULTS.map(async (vault) => {
+          const snapshot = await fetchVaultSnapshot(
+            vault.vaultAddress,
+            vault.tokenAddress,
+            vault.stabilityFundAddress,
+            vault.token,
+            userAddress,
+          );
+          return [vault.token, snapshot] as const;
+        }),
+      );
+      setVaultSnapshots(Object.fromEntries(entries));
+    } catch (err) {
+      setVaultSnapshots({});
+    }
+  }, [authenticated, embeddedWallet, fetchVaultSnapshot, publicClient, ready]);
+
+  useEffect(() => {
+    fetchVaultData();
+  }, [fetchVaultData, txHash]);
+
+  const selectedSnapshot = vaultSnapshots[selectedToken] ?? DEFAULT_SNAPSHOT;
+  const totalTvlUsd = VAULTS.reduce((sum, vault) => {
+    const snapshot = vaultSnapshots[vault.token];
+    return sum + (snapshot?.tvlUsdValue ?? 0);
+  }, 0);
+
+  const vaultData: VaultData[] = VAULTS.map((vault) => {
+    const snapshot = vaultSnapshots[vault.token] ?? DEFAULT_SNAPSHOT;
+    return {
+      collateral: {
+        name: vault.name,
+        symbol: vault.token,
+        icon: vault.icon,
+      },
+      balance: `${snapshot.tokenBalance} ${vault.token}`,
+      balanceUSD: snapshot.tvlUsd,
+      feeAPY: `${(snapshot.apyBps / 100).toFixed(2)}%`,
+      stabilityFunds: `${snapshot.stabilityTokenBalance} ${vault.token}`,
+      stabilityFundsUSD: snapshot.stabilityUsd,
+      yourBalance: `${snapshot.userTokenBalance} ${vault.token}`,
+      yourBalanceUSD: snapshot.userUsd,
+      percentOwned: snapshot.percentOwned,
+    };
+  });
 
   const openModal = (selectedMode: 'deposit' | 'withdraw') => {
     setMode(selectedMode);
@@ -376,6 +495,12 @@ export default function VaultsPage() {
         throw new Error('Enter a valid amount');
       }
 
+      const activeVault =
+        VAULTS.find((vault) => vault.token === selectedToken) ?? VAULTS[0];
+      if (!activeVault) {
+        throw new Error('Vault configuration not found');
+      }
+
       const provider = new ethers.BrowserProvider(await embeddedWallet.getEthereumProvider());
       const network = await provider.getNetwork();
       if (Number(network.chainId) !== CHAIN_ID) {
@@ -385,20 +510,20 @@ export default function VaultsPage() {
       const userAddress = await signer.getAddress();
 
       const amt = parseUnits(amount, 6);
-      const usdc = new ethers.Contract(USDC_ADDRESS, usdcABI, signer);
-      const vault = new ethers.Contract(VAULT_POOL_ADDRESS, vaultABI, signer);
+      const token = new ethers.Contract(activeVault.tokenAddress, erc20ABI, signer);
+      const vault = new ethers.Contract(activeVault.vaultAddress, vaultABI, signer);
 
       // Balance check
-      const balance: bigint = await usdc.balanceOf(userAddress);
+      const balance: bigint = await token.balanceOf(userAddress);
       if (balance < amt) {
-        throw new Error('Insufficient USDC balance in embedded wallet');
+        throw new Error(`Insufficient ${activeVault.token} balance in embedded wallet`);
       }
 
       if (mode === 'deposit') {
         // approve if needed
-        const allowance = await usdc.allowance(userAddress, VAULT_POOL_ADDRESS);
+        const allowance = await token.allowance(userAddress, activeVault.vaultAddress);
         if (allowance < amt) {
-          const approveTx = await usdc.approve(VAULT_POOL_ADDRESS, amt);
+          const approveTx = await token.approve(activeVault.vaultAddress, amt);
           await approveTx.wait();
         }
         const tx = await vault.deposit(amt);
@@ -454,11 +579,7 @@ export default function VaultsPage() {
           <div className="flex-1">
             <p className="text-gray-400 text-sm mb-1">TVL</p>
             <h2 className="text-4xl font-bold text-white">
-              {poolData.isLoading ? (
-                <div className="animate-pulse bg-gray-700 h-10 w-48 rounded"></div>
-              ) : (
-                formattedTVL
-              )}
+              {formatCurrency(totalTvlUsd)}
             </h2>
             <p className="text-gray-500 text-xs mt-1">Base Sepolia</p>
           </div>
@@ -495,11 +616,17 @@ export default function VaultsPage() {
 
         <div className="mt-3 text-xs text-gray-400 space-y-1">
           <p>
-            Lock period: {lockPeriodSec ? `${(lockPeriodSec / 86400).toFixed(0)} days` : '-'} •
-            Early exit fee: {earlyExitFee.toFixed(2)}%
+            Lock period:{' '}
+            {selectedSnapshot.lockPeriodSec
+              ? `${(selectedSnapshot.lockPeriodSec / 86400).toFixed(0)} days`
+              : '-'}{' '}
+            • Early exit fee: {selectedSnapshot.earlyExitFee.toFixed(2)}%
           </p>
-          {userUnlockTime ? (
-            <p>Your unlock time: {new Date(userUnlockTime * 1000).toLocaleString()}</p>
+          {selectedSnapshot.userUnlockTime ? (
+            <p>
+              Your unlock time:{' '}
+              {new Date(selectedSnapshot.userUnlockTime * 1000).toLocaleString()}
+            </p>
           ) : (
             <p>Deposit to start accruing and set your unlock time.</p>
           )}
@@ -589,7 +716,11 @@ export default function VaultsPage() {
             </thead>
             <tbody className="divide-y divide-slate-800/50">
               {vaultData.map((vault, index) => (
-                <tr key={index} className="hover:bg-slate-800/30 transition-colors cursor-pointer">
+                <tr
+                  key={index}
+                  className="hover:bg-slate-800/30 transition-colors cursor-pointer"
+                  onClick={() => setSelectedToken(vault.collateral.symbol as CollateralToken)}
+                >
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
                       <div className="relative w-8 h-8">
@@ -643,13 +774,27 @@ export default function VaultsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
           <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl p-6 shadow-xl">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-semibold text-white capitalize">{mode} USDC</h3>
+              <h3 className="text-xl font-semibold text-white capitalize">{mode} {selectedToken}</h3>
               <button onClick={closeModal} className="text-gray-400 hover:text-white">
                 ✕
               </button>
             </div>
             <div className="space-y-3">
-              <label className="text-sm text-gray-400">Amount (USDC)</label>
+              <div className="space-y-2">
+                <label className="text-sm text-gray-400">Collateral</label>
+                <select
+                  value={selectedToken}
+                  onChange={(e) => setSelectedToken(e.target.value as CollateralToken)}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
+                >
+                  {VAULTS.map((vault) => (
+                    <option key={vault.token} value={vault.token}>
+                      {vault.token}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <label className="text-sm text-gray-400">Amount ({selectedToken})</label>
               <input
                 type="number"
                 min="0"
@@ -702,3 +847,10 @@ export default function VaultsPage() {
     </PageLayout>
   );
 }
+
+const formatCurrency = (value: number): string => {
+  return `$${value.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+};

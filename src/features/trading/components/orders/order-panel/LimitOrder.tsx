@@ -2,12 +2,16 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useMarket } from '@/features/trading/contexts/MarketContext';
 import { usePrivy } from '@privy-io/react-auth';
-import { parseUnits } from 'viem';
 import { useLimitOrderSubmit } from './LimitOrderIntegration';
-import { useApproveUSDCForLimitOrders } from '@/features/trading/hooks/useLimitOrder';
-import { useUSDCBalance } from '@/hooks/data/useUSDCBalance';
 import { toast } from 'sonner';
 import { Market } from './components/MarketSelector';
+import { useTokenBalance } from '@/hooks/data/useTokenBalance';
+import {
+  COLLATERAL_CONFIG,
+  COLLATERAL_TOKENS,
+  CollateralToken,
+} from '@/config/contracts';
+import { useGlobalTradingActivation } from '@/features/wallet/hooks/useGlobalTradingActivation';
 
 import { CollateralInput } from './components/CollateralInput';
 import { LeverageSelector } from './components/LeverageSelector';
@@ -23,10 +27,15 @@ interface LimitOrderProps {
 }
 
 const LimitOrder: React.FC<LimitOrderProps> = ({ activeTab = 'long' }) => {
-  const { activeMarket, setActiveMarket, currentPrice } = useMarket();
+  const { activeMarket, setActiveMarket, currentPrice, collateralToken, setCollateralToken } =
+    useMarket();
   const { authenticated } = usePrivy();
   const [leverage, setLeverage] = useState(10);
-  const { usdcBalance, isLoadingBalance } = useUSDCBalance();
+  const collateralConfig = COLLATERAL_CONFIG[collateralToken as CollateralToken];
+  const { balance, isLoadingBalance } = useTokenBalance(
+    collateralConfig.address,
+    collateralConfig.decimals,
+  );
   const [oraclePrice, setOraclePrice] = useState<number | null>(null);
   const [payAmount, setPayAmount] = useState<string>('');
   const [limitPrice, setLimitPrice] = useState<string>('');
@@ -34,28 +43,17 @@ const LimitOrder: React.FC<LimitOrderProps> = ({ activeTab = 'long' }) => {
   const [takeProfitPrice, setTakeProfitPrice] = useState<string>('');
   const [stopLossPrice, setStopLossPrice] = useState<string>('');
 
-  const { submitLimitOrder, isProcessing } = useLimitOrderSubmit();
-
+  const { submitLimitOrder, isProcessing } = useLimitOrderSubmit(collateralToken);
   const {
-    approve: approveUSDC,
-    allowance,
-    isPending: isApprovalPending,
-    refetchAllowance,
-    isSuccess: isApprovalSuccess,
-  } = useApproveUSDCForLimitOrders();
+    approveAll,
+    hasGlobalAllowance,
+    isApproving: isActivationPending,
+    maxApproval,
+  } = useGlobalTradingActivation();
 
   const hasLargeAllowance = useMemo(() => {
-    return Boolean(allowance && allowance > parseUnits('10000', 6));
-  }, [allowance]);
-
-  useEffect(() => {
-    if (isApprovalSuccess) {
-      const timer = setTimeout(() => {
-        refetchAllowance();
-      }, 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [isApprovalSuccess, refetchAllowance]);
+    return hasGlobalAllowance(maxApproval);
+  }, [hasGlobalAllowance, maxApproval]);
 
   const handleMarketSelect = (market: Market) => {
     setActiveMarket({ ...market, category: market.category || 'crypto' });
@@ -104,7 +102,7 @@ const LimitOrder: React.FC<LimitOrderProps> = ({ activeTab = 'long' }) => {
   };
 
   const handleMaxClick = () => {
-    setPayAmount(usdcBalance);
+    setPayAmount(balance);
   };
 
   // Fetch Pyth Oracle price via WebSocket
@@ -134,22 +132,22 @@ const LimitOrder: React.FC<LimitOrderProps> = ({ activeTab = 'long' }) => {
   }, [activeMarket]);
 
   const handleCreateOrder = async () => {
-    if (!activeMarket) return;
+    const needsActivation = (activeTab === 'long' || activeTab === 'short') && !hasLargeAllowance;
 
-    const needsApproval = (activeTab === 'long' || activeTab === 'short') && !hasLargeAllowance;
-
-    if (needsApproval) {
+    if (needsActivation) {
       try {
-        toast.loading('Approving USDC...', { id: 'limit-approval' });
-        const maxAmount = parseUnits('1000000', 6).toString();
-        await approveUSDC(maxAmount);
-        toast.success('Approved!', { id: 'limit-approval' });
+        toast.loading('Activating trading...', { id: 'limit-approval' });
+        await approveAll(maxApproval);
+        toast.success('Trading activated!', { id: 'limit-approval' });
       } catch (error) {
         console.error('Approval failed:', error);
         toast.error('Approval failed or rejected', { id: 'limit-approval' });
         return;
       }
+      return;
     }
+
+    if (!activeMarket) return;
 
     let tpPrice: string | undefined;
     let slPrice: string | undefined;
@@ -177,6 +175,7 @@ const LimitOrder: React.FC<LimitOrderProps> = ({ activeTab = 'long' }) => {
       triggerPrice: limitPrice || '0',
       takeProfit: tpPrice,
       stopLoss: slPrice,
+      collateralToken,
     });
   };
 
@@ -186,11 +185,17 @@ const LimitOrder: React.FC<LimitOrderProps> = ({ activeTab = 'long' }) => {
       <CollateralInput
         value={payAmount}
         onChange={handlePayInputChange}
-        balance={usdcBalance}
+        balance={balance}
         isLoadingBalance={isLoadingBalance}
         onMaxClick={handleMaxClick}
         label="Pay"
-        tokenSymbol="USDC"
+        tokenSymbol={collateralToken}
+        tokenIcon={collateralConfig.icon}
+        tokenOptions={COLLATERAL_TOKENS.map((token) => ({
+          symbol: token,
+          icon: COLLATERAL_CONFIG[token].icon,
+        }))}
+        onTokenChange={(token) => setCollateralToken(token as CollateralToken)}
       />
 
       {/* Position Info */}
@@ -254,7 +259,7 @@ const LimitOrder: React.FC<LimitOrderProps> = ({ activeTab = 'long' }) => {
         activeTab={activeTab}
         authenticated={authenticated}
         isProcessing={isProcessing}
-        isUSDCApprovalPending={isApprovalPending}
+        isUSDCApprovalPending={isActivationPending}
         payAmount={payAmount}
         limitPrice={limitPrice}
         hasLargeAllowance={hasLargeAllowance}

@@ -3,15 +3,10 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useMarket } from '@/features/trading/contexts/MarketContext';
 import { usePrivy, useWallets } from '@privy-io/react-auth';
 import { baseSepolia } from 'wagmi/chains';
-import { parseUnits } from 'viem';
-import {
-  useRelayMarketOrder,
-  useApproveUSDCForTrading,
-  calculatePositionCost,
-} from '@/features/trading/hooks/useMarketOrder';
+import { useRelayMarketOrder, calculatePositionCost } from '@/features/trading/hooks/useMarketOrder';
 import { usePaymasterFlow } from '@/features/wallet/hooks/usePaymaster';
 import { useEmbeddedWallet } from '@/features/wallet/hooks/useEmbeddedWallet';
-import { useUSDCBalance } from '@/hooks/data/useUSDCBalance';
+import { useTokenBalance } from '@/hooks/data/useTokenBalance';
 import { toast } from 'sonner';
 import { useTPSL } from '@/features/trading/hooks/useTPSL';
 import { useUserPositions } from '@/hooks/data/usePositions';
@@ -23,18 +18,29 @@ import { TpSlInputs } from './components/TpSlInputs';
 import { OrderSummary } from './components/OrderSummary';
 
 import { MarketActionButtons } from './market-order/MarketActionButtons';
+import {
+  COLLATERAL_CONFIG,
+  COLLATERAL_TOKENS,
+  CollateralToken,
+} from '@/config/contracts';
+import { useGlobalTradingActivation } from '@/features/wallet/hooks/useGlobalTradingActivation';
 
 interface MarketOrderProps {
   activeTab?: 'long' | 'short' | 'swap';
 }
 
 const MarketOrder: React.FC<MarketOrderProps> = ({ activeTab = 'long' }) => {
-  const { activeMarket, setActiveMarket, currentPrice } = useMarket();
+  const { activeMarket, setActiveMarket, currentPrice, collateralToken, setCollateralToken } =
+    useMarket();
   const { authenticated } = usePrivy();
   const { wallets } = useWallets();
   const { address: embeddedAddress, hasEmbeddedWallet } = useEmbeddedWallet();
   const [leverage, setLeverage] = useState(10);
-  const { usdcBalance, isLoadingBalance } = useUSDCBalance();
+  const collateralConfig = COLLATERAL_CONFIG[collateralToken as CollateralToken];
+  const { balance, isLoadingBalance } = useTokenBalance(
+    collateralConfig.address,
+    collateralConfig.decimals,
+  );
   const [payAmount, setPayAmount] = useState<string>('');
   const [isTpSlEnabled, setIsTpSlEnabled] = useState(false);
   const [takeProfitPrice, setTakeProfitPrice] = useState<string>('');
@@ -49,19 +55,24 @@ const MarketOrder: React.FC<MarketOrderProps> = ({ activeTab = 'long' }) => {
     positionId: relayPositionId,
   } = useRelayMarketOrder();
 
-  const { balance: paymasterBalance, isApproving, isDepositing } = usePaymasterFlow();
+  const {
+    balance: paymasterBalance,
+    isApproving: isPaymasterApproving,
+    isDepositing,
+  } = usePaymasterFlow();
 
   const {
-    approve: approveUSDC,
-    allowance,
-    isPending: isApprovalPending,
-  } = useApproveUSDCForTrading();
+    approveAll,
+    hasGlobalAllowance,
+    isApproving: isActivationPending,
+    maxApproval,
+  } = useGlobalTradingActivation();
   const { setTPSL } = useTPSL();
-  const { positionIds, refetch: refetchPositions } = useUserPositions();
+  const { positionIds, refetch: refetchPositions } = useUserPositions(collateralToken);
 
   const hasLargeAllowance = useMemo(() => {
-    return Boolean(allowance && allowance > parseUnits('10000', 6));
-  }, [allowance]);
+    return hasGlobalAllowance(maxApproval);
+  }, [hasGlobalAllowance, maxApproval]);
 
   const handleMarketSelect = (market: Market) => {
     setActiveMarket({ ...market, category: market.category || 'crypto' });
@@ -109,7 +120,7 @@ const MarketOrder: React.FC<MarketOrderProps> = ({ activeTab = 'long' }) => {
   };
 
   const handleMaxClick = () => {
-    setPayAmount(usdcBalance);
+    setPayAmount(balance);
   };
 
   // Handle market order execution
@@ -124,18 +135,7 @@ const MarketOrder: React.FC<MarketOrderProps> = ({ activeTab = 'long' }) => {
       return;
     }
 
-    if (!payAmount || parseFloat(payAmount) <= 0) {
-      toast.error('Please enter collateral amount');
-      return;
-    }
-
-    if (!activeMarket) {
-      toast.error('Please select a market');
-      return;
-    }
-
-    // Check if USDC is approved first (only for long/short, not swap)
-    const needsApproval = (activeTab === 'long' || activeTab === 'short') && !hasLargeAllowance;
+    const needsActivation = (activeTab === 'long' || activeTab === 'short') && !hasLargeAllowance;
 
     // Find and set active embedded wallet used for both actions
     const embeddedWallet = wallets.find(
@@ -149,20 +149,28 @@ const MarketOrder: React.FC<MarketOrderProps> = ({ activeTab = 'long' }) => {
 
     await embeddedWallet.switchChain(baseSepolia.id);
 
-    // 1. Handle Approval if needed
-    if (needsApproval) {
+    // 1. Handle activation if needed (global gate)
+    if (needsActivation) {
       try {
-        toast.loading('Approving USDC...', { id: 'market-approval' });
-        const maxAmount = parseUnits('1000000', 6).toString();
-        // This likely prompts wallet and waits for tx hash.
-        // We assume verify or wait logic is inside or handled by blockchain speed.
-        await approveUSDC(maxAmount);
-        toast.success('✅ Approved!', { id: 'market-approval' });
+        toast.loading('Activating trading...', { id: 'market-approval' });
+        await approveAll(maxApproval);
+        toast.success('? Trading activated!', { id: 'market-approval' });
       } catch (error) {
         console.error('Approval failed:', error);
         toast.error('Approval failed or rejected', { id: 'market-approval' });
         return; // Stop flow if approval fails
       }
+      return; // Require activation before trading
+    }
+
+    if (!payAmount || parseFloat(payAmount) <= 0) {
+      toast.error('Please enter collateral amount');
+      return;
+    }
+
+    if (!activeMarket) {
+      toast.error('Please select a market');
+      return;
     }
 
     // 2. Proceed to trade
@@ -173,6 +181,7 @@ const MarketOrder: React.FC<MarketOrderProps> = ({ activeTab = 'long' }) => {
         isLong: activeTab === 'long',
         collateral: payAmount,
         leverage: Math.floor(leverage), // Round to integer
+        collateralToken,
       });
       // Success toast will be shown by useEffect below
     } catch (error) {
@@ -226,6 +235,7 @@ const MarketOrder: React.FC<MarketOrderProps> = ({ activeTab = 'long' }) => {
               trader: embeddedAddress,
               takeProfit: takeProfitPrice || undefined,
               stopLoss: stopLossPrice || undefined,
+              collateralToken,
             });
 
             if (success) {
@@ -273,14 +283,21 @@ const MarketOrder: React.FC<MarketOrderProps> = ({ activeTab = 'long' }) => {
 
   return (
     <div className="flex flex-col gap-3 py-4 bg-trading-bg h-full px-3">
-      {/* Collateral Input (USDC) */}
+      {/* Collateral Input */}
       <CollateralInput
         value={payAmount}
         onChange={handlePayInputChange}
-        balance={usdcBalance}
+        balance={balance}
         isLoadingBalance={isLoadingBalance}
         onMaxClick={handleMaxClick}
         label="Collateral"
+        tokenSymbol={collateralToken}
+        tokenIcon={collateralConfig.icon}
+        tokenOptions={COLLATERAL_TOKENS.map((token) => ({
+          symbol: token,
+          icon: COLLATERAL_CONFIG[token].icon,
+        }))}
+        onTokenChange={(token) => setCollateralToken(token as CollateralToken)}
       />
 
       {/* Position Info (Size & Market Selector) */}
@@ -332,10 +349,10 @@ const MarketOrder: React.FC<MarketOrderProps> = ({ activeTab = 'long' }) => {
       <MarketActionButtons
         activeTab={activeTab}
         authenticated={authenticated}
-        isApproving={isApproving}
+        isApproving={isPaymasterApproving}
         isDepositing={isDepositing}
         isRelayPending={isRelayPending}
-        isUSDCApprovalPending={isApprovalPending}
+        isUSDCApprovalPending={isActivationPending}
         payAmount={payAmount}
         hasLargeAllowance={hasLargeAllowance}
         onAction={handleOpenPosition}

@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { useTPSL, TPSLConfig } from '@/features/trading/hooks/useTPSL';
 import { usePrice } from '@/hooks/data/usePrices';
+import { useMarket } from '@/features/trading/contexts/MarketContext';
+import { CollateralToken } from '@/config/contracts';
 
 interface TPSLModalProps {
   isOpen: boolean;
@@ -13,6 +15,7 @@ interface TPSLModalProps {
   symbol: string;
   entryPrice: number;
   isLong: boolean;
+  collateralToken?: CollateralToken;
 }
 
 const TPSLModal: React.FC<TPSLModalProps> = ({
@@ -23,12 +26,15 @@ const TPSLModal: React.FC<TPSLModalProps> = ({
   symbol,
   entryPrice,
   isLong,
+  collateralToken: collateralTokenProp,
 }) => {
   const [takeProfitPrice, setTakeProfitPrice] = useState<string>('');
   const [stopLossPrice, setStopLossPrice] = useState<string>('');
   const [takeProfitError, setTakeProfitError] = useState<string>('');
   const [stopLossError, setStopLossError] = useState<string>('');
   const { setTPSL, getTPSL, deleteTPSL, isPending } = useTPSL();
+  const { collateralToken: contextToken } = useMarket();
+  const collateralToken = collateralTokenProp ?? contextToken;
 
   // Fetch real-time price from backend
   const { price: priceData } = usePrice(symbol);
@@ -39,10 +45,10 @@ const TPSLModal: React.FC<TPSLModalProps> = ({
     if (isOpen) {
       loadExistingTPSL();
     }
-  }, [isOpen, positionId]);
+  }, [isOpen, positionId, collateralToken]);
 
   const loadExistingTPSL = async () => {
-    const config = await getTPSL(positionId);
+    const config = await getTPSL(positionId, collateralToken);
     if (config) {
       // Convert from 8 decimals to readable price
       if (config.takeProfit) {
@@ -107,6 +113,7 @@ const TPSLModal: React.FC<TPSLModalProps> = ({
       trader,
       takeProfit: takeProfitPrice || undefined,
       stopLoss: stopLossPrice || undefined,
+      collateralToken,
     });
 
     if (success) {
@@ -115,7 +122,7 @@ const TPSLModal: React.FC<TPSLModalProps> = ({
   };
 
   const handleDelete = async () => {
-    const success = await deleteTPSL(positionId, trader);
+    const success = await deleteTPSL(positionId, trader, collateralToken);
     if (success) {
       setTakeProfitPrice('');
       setStopLossPrice('');

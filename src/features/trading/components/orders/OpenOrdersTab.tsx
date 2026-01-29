@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ALL_MARKETS } from '@/features/trading/constants/markets';
 import MobileOpenOrderCard from './MobileOpenOrderCard';
+import { useMarket } from '@/features/trading/contexts/MarketContext';
 import {
   Table,
   TableBody,
@@ -21,12 +22,13 @@ import {
 } from '@/components/ui/table';
 
 export default function OpenOrdersTab() {
+  const { collateralToken } = useMarket();
   // Limit Orders Data
   const {
     orders: limitOrders,
     isLoading: isLoadingLimit,
     refetch: refetchLimit,
-  } = useUserPendingOrders();
+  } = useUserPendingOrders(collateralToken);
   const { cancelOrder: cancelLimitOrder, isPending: isCancellingLimit } = useCancelOrder();
 
   // Tap Orders Data
@@ -46,7 +48,7 @@ export default function OpenOrdersTab() {
   const handleCancelLimit = async (orderId: bigint) => {
     try {
       toast.loading('Cancelling order...', { id: 'cancel-limit' });
-      await cancelLimitOrder(orderId);
+      await cancelLimitOrder(orderId, collateralToken);
       toast.success('Order cancelled!', { id: 'cancel-limit' });
       setTimeout(() => refetchLimit(), 1000);
     } catch (error) {

@@ -12,6 +12,7 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:300
 export interface GaslessCloseParams {
   positionId: bigint;
   symbol: string;
+  collateralToken?: 'USDC' | 'IDRX';
 }
 
 export function useGaslessClose() {
@@ -41,6 +42,7 @@ export function useGaslessClose() {
             userAddress: address,
             positionId: params.positionId.toString(),
             symbol: params.symbol,
+            collateralToken: params.collateralToken,
           }),
         });
 

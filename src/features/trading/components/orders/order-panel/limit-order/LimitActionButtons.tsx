@@ -39,13 +39,13 @@ export const LimitActionButtons: React.FC<LimitActionButtonsProps> = ({
 
   const getButtonText = () => {
     if (!authenticated) return 'Connect Wallet';
-    if (isUSDCApprovalPending) return 'Approving USDC...';
+    if (isUSDCApprovalPending) return 'Approving Collateral...';
     if (isProcessing) return 'Processing...';
     if (!payAmount) return 'Enter Amount';
     if (!limitPrice) return 'Enter Limit Price';
 
     if ((activeTab === 'long' || activeTab === 'short') && !hasLargeAllowance) {
-      return `Approve & Create ${activeTab === 'long' ? 'Long' : 'Short'} Order`;
+      return 'Activate Trading';
     }
 
     return `Create Limit ${activeTab === 'long' ? 'Long' : 'Short'} Order`;

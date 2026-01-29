@@ -20,7 +20,15 @@ import {
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { baseSepolia } from 'wagmi/chains';
 import { useWallets } from '@privy-io/react-auth';
-import { LIMIT_EXECUTOR_ADDRESS, USDC_ADDRESS, USDC_DECIMALS, RPC_URL } from '@/config/contracts';
+import {
+  CollateralToken,
+  getCollateralConfig,
+  LIMIT_EXECUTOR_ADDRESS,
+  STABILITY_FUND_ADDRESS,
+  USDC_ADDRESS,
+  USDC_DECIMALS,
+  RPC_URL,
+} from '@/config/contracts';
 import LimitExecutorJSON from '@/contracts/abis/LimitExecutor.json';
 import MockUSDCABI from '@/contracts/abis/MockUSDC.json';
 import { useEmbeddedWallet } from '@/features/wallet/hooks/useEmbeddedWallet';
@@ -64,26 +72,29 @@ export interface Order {
 export interface CreateLimitOpenParams {
   symbol: string;
   isLong: boolean;
-  collateral: string; // USDC amount
+  collateral: string; // Collateral amount
   leverage: number;
   triggerPrice: string; // Price with 8 decimals
   takeProfit?: string; // Optional TP price (8 decimals)
   stopLoss?: string; // Optional SL price (8 decimals)
   expiresAt?: number; // Optional custom expiry (unix)
+  collateralToken?: CollateralToken;
 }
 
 export interface CreateLimitCloseParams {
   positionId: bigint;
   triggerPrice: string; // Price with 8 decimals
+  collateralToken?: CollateralToken;
 }
 
 export interface CreateStopLossParams {
   positionId: bigint;
   triggerPrice: string; // Price with 8 decimals
+  collateralToken?: CollateralToken;
 }
 
 /**
- * Hook to check and approve USDC for LimitExecutor
+ * Hook to check and approve USDC for StabilityFund (single approval target)
  */
 export function useApproveUSDCForLimitOrders() {
   const { address } = useEmbeddedWallet();
@@ -100,7 +111,7 @@ export function useApproveUSDCForLimitOrders() {
     address: USDC_ADDRESS,
     abi: MockUSDCABI,
     functionName: 'allowance',
-    args: address ? [address, LIMIT_EXECUTOR_ADDRESS] : undefined,
+    args: address ? [address, STABILITY_FUND_ADDRESS] : undefined,
     query: {
       enabled: !!address,
     },
@@ -131,7 +142,7 @@ export function useApproveUSDCForLimitOrders() {
       const data = encodeFunctionData({
         abi: MockUSDCABI,
         functionName: 'approve',
-        args: [LIMIT_EXECUTOR_ADDRESS, amountBigInt],
+        args: [STABILITY_FUND_ADDRESS, amountBigInt],
       });
 
       // Estimate gas
@@ -190,9 +201,10 @@ export function useApproveUSDCForLimitOrders() {
 /**
  * Hook to fetch LimitExecutor configuration (e.g. trading fee)
  */
-export function useLimitExecutorConfig() {
+export function useLimitExecutorConfig(token: CollateralToken = 'USDC') {
+  const collateralConfig = getCollateralConfig(token);
   const { data: tradingFeeBps } = useReadContract({
-    address: LIMIT_EXECUTOR_ADDRESS,
+    address: collateralConfig.limitExecutor,
     abi: LimitExecutorABI,
     functionName: 'tradingFeeBps',
     query: {
@@ -293,6 +305,8 @@ export function useCreateLimitOpenOrder() {
           throw new Error('Wallet not connected');
         }
 
+        const collateralConfig = getCollateralConfig(params.collateralToken ?? 'USDC');
+
         const embeddedWallet = wallets.find(
           (w) => w.walletClientType === 'privy' && w.address === address,
         );
@@ -309,13 +323,13 @@ export function useCreateLimitOpenOrder() {
         }
 
         // Parse values
-        const collateralBigInt = parseUnits(params.collateral, USDC_DECIMALS);
+        const collateralBigInt = parseUnits(params.collateral, collateralConfig.decimals);
         const triggerPriceBigInt = parseUnits(params.triggerPrice, 8);
         const leverageBigInt = BigInt(Math.round(params.leverage));
 
         // Fetch latest user nonce from contract
         const nonce = (await publicClient.readContract({
-          address: LIMIT_EXECUTOR_ADDRESS,
+          address: collateralConfig.limitExecutor,
           abi: LimitExecutorABI,
           functionName: 'getUserCurrentNonce',
           args: [address],
@@ -349,7 +363,7 @@ export function useCreateLimitOpenOrder() {
               triggerPriceBigInt,
               nonce,
               expiresAt,
-              LIMIT_EXECUTOR_ADDRESS,
+              collateralConfig.limitExecutor,
             ],
           ),
         );
@@ -371,6 +385,7 @@ export function useCreateLimitOpenOrder() {
           signature,
           takeProfit: params.takeProfit, // Pass TP/SL to backend
           stopLoss: params.stopLoss,
+          collateralToken: params.collateralToken ?? 'USDC',
           metadata: {
             collateralUsd: params.collateral,
             triggerPriceUsd: params.triggerPrice,
@@ -431,6 +446,8 @@ export function useCreateLimitCloseOrder() {
           throw new Error('Wallet not connected');
         }
 
+        const collateralConfig = getCollateralConfig(params.collateralToken ?? 'USDC');
+
         const embeddedWallet = wallets.find(
           (w) => w.walletClientType === 'privy' && w.address === address,
         );
@@ -459,7 +476,7 @@ export function useCreateLimitCloseOrder() {
           params: [
             {
               from: address,
-              to: LIMIT_EXECUTOR_ADDRESS,
+              to: collateralConfig.limitExecutor,
               data,
             },
           ],
@@ -472,7 +489,7 @@ export function useCreateLimitCloseOrder() {
           params: [
             {
               from: address,
-              to: LIMIT_EXECUTOR_ADDRESS,
+              to: collateralConfig.limitExecutor,
               data,
               gas: '0x' + gasLimit.toString(16),
             },
@@ -526,6 +543,8 @@ export function useCreateStopLossOrder() {
           throw new Error('Wallet not connected');
         }
 
+        const collateralConfig = getCollateralConfig(params.collateralToken ?? 'USDC');
+
         const embeddedWallet = wallets.find(
           (w) => w.walletClientType === 'privy' && w.address === address,
         );
@@ -554,7 +573,7 @@ export function useCreateStopLossOrder() {
           params: [
             {
               from: address,
-              to: LIMIT_EXECUTOR_ADDRESS,
+              to: collateralConfig.limitExecutor,
               data,
             },
           ],
@@ -567,7 +586,7 @@ export function useCreateStopLossOrder() {
           params: [
             {
               from: address,
-              to: LIMIT_EXECUTOR_ADDRESS,
+              to: collateralConfig.limitExecutor,
               data,
               gas: '0x' + gasLimit.toString(16),
             },
@@ -621,7 +640,7 @@ export function useCancelOrder() {
   );
 
   const cancelOrder = useCallback(
-    async (orderId: bigint) => {
+    async (orderId: bigint, collateralToken: CollateralToken = 'USDC') => {
       try {
         setIsPending(true);
         setError(null);
@@ -629,6 +648,8 @@ export function useCancelOrder() {
         if (!address) {
           throw new Error('Wallet not connected');
         }
+
+        const collateralConfig = getCollateralConfig(collateralToken);
 
         const embeddedWallet = wallets.find(
           (w) => w.walletClientType === 'privy' && w.address === address,
@@ -640,7 +661,7 @@ export function useCancelOrder() {
 
         // Get user's current nonce from contract
         const userNonce = (await publicClient.readContract({
-          address: LIMIT_EXECUTOR_ADDRESS,
+          address: collateralConfig.limitExecutor,
           abi: LimitExecutorABI,
           functionName: 'getUserCurrentNonce',
           args: [address],
@@ -657,7 +678,7 @@ export function useCancelOrder() {
         const messageHash = keccak256(
           encodePacked(
             ['address', 'uint256', 'uint256', 'address', 'string'],
-            [address, orderId, userNonce, LIMIT_EXECUTOR_ADDRESS, 'CANCEL'],
+            [address, orderId, userNonce, collateralConfig.limitExecutor, 'CANCEL'],
           ),
         );
 
@@ -676,6 +697,7 @@ export function useCancelOrder() {
             userAddress: address,
             orderId: orderId.toString(),
             signature: signature,
+            collateralToken,
           }),
         });
 
@@ -714,15 +736,16 @@ export function useCancelOrder() {
 /**
  * Hook to get all user orders
  */
-export function useUserOrders() {
+export function useUserOrders(token: CollateralToken = 'USDC') {
   const { address } = useEmbeddedWallet();
+  const collateralConfig = getCollateralConfig(token);
 
   const {
     data: orderIds,
     isLoading,
     refetch,
   } = useReadContract({
-    address: LIMIT_EXECUTOR_ADDRESS,
+    address: collateralConfig.limitExecutor,
     abi: LimitExecutorABI,
     functionName: 'getUserOrders',
     args: address ? [address] : undefined,
@@ -742,11 +765,12 @@ export function useUserOrders() {
 /**
  * Hook to get pending orders for a user
  */
-export function useUserPendingOrders() {
+export function useUserPendingOrders(token: CollateralToken = 'USDC') {
   const { address } = useEmbeddedWallet();
+  const collateralConfig = getCollateralConfig(token);
 
   const { data, isLoading, refetch } = useReadContract({
-    address: LIMIT_EXECUTOR_ADDRESS,
+    address: collateralConfig.limitExecutor,
     abi: LimitExecutorABI,
     functionName: 'getUserPendingOrders',
     args: address ? [address] : undefined,
@@ -783,9 +807,10 @@ export function useUserPendingOrders() {
 /**
  * Hook to get single order details
  */
-export function useOrder(orderId: bigint | undefined) {
+export function useOrder(orderId: bigint | undefined, token: CollateralToken = 'USDC') {
+  const collateralConfig = getCollateralConfig(token);
   const { data, isLoading, refetch } = useReadContract({
-    address: LIMIT_EXECUTOR_ADDRESS,
+    address: collateralConfig.limitExecutor,
     abi: LimitExecutorABI,
     functionName: 'getOrder',
     args: orderId !== undefined ? [orderId] : undefined,

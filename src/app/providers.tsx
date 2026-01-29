@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { baseSepolia } from 'wagmi/chains';
 import { Toaster } from '@/components/ui/sonner';
 import { TPSLProvider } from '@/contexts/TPSLContext';
+import { MarketProvider } from '@/features/trading/contexts/MarketContext';
 
 export const config = createConfig({
   chains: [baseSepolia],
@@ -37,10 +38,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
     >
       <QueryClientProvider client={queryClient}>
         <WagmiProvider config={config}>
-          <TPSLProvider>
-            <Toaster />
-            {children}
-          </TPSLProvider>
+          <MarketProvider>
+            <TPSLProvider>
+              <Toaster />
+              {children}
+            </TPSLProvider>
+          </MarketProvider>
         </WagmiProvider>
       </QueryClientProvider>
     </PrivyProvider>

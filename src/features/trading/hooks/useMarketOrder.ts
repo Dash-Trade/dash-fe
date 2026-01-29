@@ -7,7 +7,13 @@ import { parseUnits, encodeFunctionData, keccak256, encodePacked } from 'viem';
 import { useState, useCallback, useEffect } from 'react';
 import { baseSepolia } from 'wagmi/chains';
 import { useWallets } from '@privy-io/react-auth';
-import { MARKET_EXECUTOR_ADDRESS, USDC_ADDRESS, USDC_DECIMALS } from '@/config/contracts';
+import {
+  CollateralToken,
+  getCollateralConfig,
+  STABILITY_FUND_ADDRESS,
+  USDC_ADDRESS,
+  USDC_DECIMALS,
+} from '@/config/contracts';
 import MarketExecutorJSON from '@/contracts/abis/MarketExecutor.json';
 import MockUSDCABI from '@/contracts/abis/MockUSDC.json';
 
@@ -22,17 +28,19 @@ import { useEmbeddedWallet } from '@/features/wallet/hooks/useEmbeddedWallet';
 export interface OpenPositionParams {
   symbol: string;
   isLong: boolean;
-  collateral: string; // USDC amount
+  collateral: string; // Collateral amount
   leverage: number;
+  collateralToken?: CollateralToken;
 }
 
 export interface ClosePositionParams {
   positionId: bigint;
   symbol: string;
+  collateralToken?: CollateralToken;
 }
 
 /**
- * Hook to check and approve USDC for MarketExecutor
+ * Hook to check and approve USDC for StabilityFund (single approval target)
  */
 export function useApproveUSDCForTrading() {
   const { address } = useEmbeddedWallet();
@@ -49,7 +57,7 @@ export function useApproveUSDCForTrading() {
     address: USDC_ADDRESS,
     abi: MockUSDCABI,
     functionName: 'allowance',
-    args: address ? [address, MARKET_EXECUTOR_ADDRESS] : undefined,
+    args: address ? [address, STABILITY_FUND_ADDRESS] : undefined,
     query: {
       enabled: !!address,
       refetchInterval: 2000, // Poll every 2 seconds for real-time allowance updates
@@ -81,7 +89,7 @@ export function useApproveUSDCForTrading() {
       const data = encodeFunctionData({
         abi: MockUSDCABI,
         functionName: 'approve',
-        args: [MARKET_EXECUTOR_ADDRESS, amountBigInt],
+        args: [STABILITY_FUND_ADDRESS, amountBigInt],
       });
 
       // Estimate gas
@@ -170,8 +178,9 @@ export function useOpenMarketPosition() {
 
         setIsLoadingPrice(false);
 
+        const collateralConfig = getCollateralConfig(params.collateralToken ?? 'USDC');
         // Parse collateral
-        const collateralBigInt = parseUnits(params.collateral, USDC_DECIMALS);
+        const collateralBigInt = parseUnits(params.collateral, collateralConfig.decimals);
 
         // Calculate total fee (trading fee)
         const positionSize = collateralBigInt * BigInt(params.leverage);
@@ -229,11 +238,11 @@ export function useOpenMarketPosition() {
             method: 'eth_call',
             params: [
               {
-                to: USDC_ADDRESS,
+                to: collateralConfig.address,
                 data: encodeFunctionData({
                   abi: MockUSDCABI,
                   functionName: 'allowance',
-                  args: [address, MARKET_EXECUTOR_ADDRESS],
+                  args: [address, collateralConfig.stabilityFund],
                 }),
               },
               'latest',
@@ -243,7 +252,7 @@ export function useOpenMarketPosition() {
 
           if (allowanceBigInt < totalAmount) {
             throw new Error(
-              `Insufficient USDC allowance. Have: ${allowanceBigInt}, Need: ${totalAmount}. Please approve USDC first.`,
+              `Insufficient ${collateralConfig.symbol} allowance. Have: ${allowanceBigInt}, Need: ${totalAmount}. Please approve first.`,
             );
           }
         } catch (err: any) {
@@ -257,7 +266,7 @@ export function useOpenMarketPosition() {
             method: 'eth_call',
             params: [
               {
-                to: USDC_ADDRESS,
+                to: collateralConfig.address,
                 data: encodeFunctionData({
                   abi: MockUSDCABI,
                   functionName: 'balanceOf',
@@ -271,7 +280,7 @@ export function useOpenMarketPosition() {
 
           if (balanceBigInt < totalAmount) {
             throw new Error(
-              `Insufficient USDC balance. Have: ${balanceBigInt}, Need: ${totalAmount}`,
+              `Insufficient ${collateralConfig.symbol} balance. Have: ${balanceBigInt}, Need: ${totalAmount}`,
             );
           }
         } catch (err: any) {
@@ -287,7 +296,7 @@ export function useOpenMarketPosition() {
             params: [
               {
                 from: address,
-                to: MARKET_EXECUTOR_ADDRESS,
+                to: collateralConfig.marketExecutor,
                 data,
               },
             ],
@@ -309,7 +318,7 @@ export function useOpenMarketPosition() {
           params: [
             {
               from: address,
-              to: MARKET_EXECUTOR_ADDRESS,
+              to: collateralConfig.marketExecutor,
               data,
               gas: '0x' + gasLimit.toString(16),
             },
@@ -367,6 +376,8 @@ export function useCloseMarketPosition() {
           throw new Error('Wallet not connected');
         }
 
+        const collateralConfig = getCollateralConfig(params.collateralToken ?? 'USDC');
+
         // Find embedded wallet
         const embeddedWallet = wallets.find(
           (w) => w.walletClientType === 'privy' && w.address === address,
@@ -409,7 +420,7 @@ export function useCloseMarketPosition() {
           params: [
             {
               from: address,
-              to: MARKET_EXECUTOR_ADDRESS,
+              to: collateralConfig.marketExecutor,
               data,
             },
           ],
@@ -423,7 +434,7 @@ export function useCloseMarketPosition() {
           params: [
             {
               from: address,
-              to: MARKET_EXECUTOR_ADDRESS,
+              to: collateralConfig.marketExecutor,
               data,
               gas: '0x' + gasLimit.toString(16),
             },
@@ -458,9 +469,10 @@ export function useCloseMarketPosition() {
 /**
  * Hook to get trading fees
  */
-export function useTradingFees() {
+export function useTradingFees(token: CollateralToken = 'USDC') {
+  const collateralConfig = getCollateralConfig(token);
   const { data, isLoading } = useReadContract({
-    address: MARKET_EXECUTOR_ADDRESS,
+    address: collateralConfig.marketExecutor,
     abi: MarketExecutorABI,
     functionName: 'tradingFeeBps',
   });
@@ -634,6 +646,8 @@ export function useRelayMarketOrder() {
           throw new Error('Wallet not connected');
         }
 
+        const collateralConfig = getCollateralConfig(params.collateralToken ?? 'USDC');
+
         // Find embedded wallet
         const embeddedWallet = wallets.find(
           (w) => w.walletClientType === 'privy' && w.address === address,
@@ -654,7 +668,7 @@ export function useRelayMarketOrder() {
         const signedPrice: SignedPriceData = await getSignedPrice(params.symbol);
 
         // Parse collateral
-        const collateralBigInt = parseUnits(params.collateral, USDC_DECIMALS);
+        const collateralBigInt = parseUnits(params.collateral, collateralConfig.decimals);
 
         // Fetch current nonce for this user from contract (ALWAYS fetch fresh nonce!)
         let currentNonce: bigint;
@@ -669,7 +683,7 @@ export function useRelayMarketOrder() {
             method: 'eth_call',
             params: [
               {
-                to: MARKET_EXECUTOR_ADDRESS,
+                to: collateralConfig.marketExecutor,
                 data: nonceData,
               },
               'latest',
@@ -694,7 +708,7 @@ export function useRelayMarketOrder() {
               collateralBigInt,
               BigInt(params.leverage),
               currentNonce, // Use freshly fetched nonce
-              MARKET_EXECUTOR_ADDRESS,
+              collateralConfig.marketExecutor,
             ],
           ),
         );
@@ -727,7 +741,7 @@ export function useRelayMarketOrder() {
 
         // Relay transaction through backend (gasless!)
         const result = await relayTransaction({
-          to: MARKET_EXECUTOR_ADDRESS,
+          to: collateralConfig.marketExecutor,
           data,
           userAddress: address,
         });
@@ -785,6 +799,8 @@ export function useRelayClosePosition() {
           throw new Error('Wallet not connected');
         }
 
+        const collateralConfig = getCollateralConfig(params.collateralToken ?? 'USDC');
+
         // Find embedded wallet
         const embeddedWallet = wallets.find(
           (w) => w.walletClientType === 'privy' && w.address === address,
@@ -817,7 +833,7 @@ export function useRelayClosePosition() {
             method: 'eth_call',
             params: [
               {
-                to: MARKET_EXECUTOR_ADDRESS,
+                to: collateralConfig.marketExecutor,
                 data: nonceData,
               },
               'latest',
@@ -833,7 +849,7 @@ export function useRelayClosePosition() {
         // Create message to sign (must match contract's message format for closeMarketPositionMeta)
         const packedData = encodePacked(
           ['address', 'uint256', 'uint256', 'address'],
-          [address, params.positionId, currentNonce, MARKET_EXECUTOR_ADDRESS],
+          [address, params.positionId, currentNonce, collateralConfig.marketExecutor],
         );
         const messageHash = keccak256(packedData);
 
@@ -862,7 +878,7 @@ export function useRelayClosePosition() {
 
         // Relay transaction through backend (gasless!)
         const result = await relayTransaction({
-          to: MARKET_EXECUTOR_ADDRESS,
+          to: collateralConfig.marketExecutor,
           data,
           userAddress: address,
         });

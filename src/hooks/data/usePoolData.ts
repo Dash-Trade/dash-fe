@@ -3,9 +3,14 @@ import { usePublicClient } from 'wagmi';
 import { formatUnits } from 'viem';
 
 const VAULT_POOL = process.env.NEXT_PUBLIC_VAULT_POOL_ADDRESS as `0x${string}`;
+const VAULT_POOL_IDRX = process.env.NEXT_PUBLIC_VAULT_POOL_IDRX_ADDRESS as `0x${string}`;
 const STABILITY_FUND = process.env.NEXT_PUBLIC_STABILITY_FUND_ADDRESS as `0x${string}`;
+const STABILITY_FUND_IDRX = process.env.NEXT_PUBLIC_STABILITY_FUND_IDRX_ADDRESS as `0x${string}`;
 const DASH_STAKING = process.env.NEXT_PUBLIC_DASH_STAKING_ADDRESS as `0x${string}`;
 const USDC_TOKEN = process.env.NEXT_PUBLIC_USDC_TOKEN_ADDRESS as `0x${string}`;
+const IDRX_TOKEN = process.env.NEXT_PUBLIC_IDRX_TOKEN_ADDRESS as `0x${string}`;
+
+const IDRX_PER_USD = 16700;
 
 const vaultPoolABI = [
   {
@@ -96,29 +101,48 @@ export const usePoolData = (): PoolData => {
           error: null,
         }));
 
-        const [vaultAssets, bufferBalance, stakingTVL, stakingRewards] = await Promise.all([
-          publicClient.readContract({
-            address: VAULT_POOL,
-            abi: vaultPoolABI,
-            functionName: 'totalAssets',
-          }),
-          publicClient.readContract({
-            address: USDC_TOKEN,
-            abi: erc20ABI,
-            functionName: 'balanceOf',
-            args: [STABILITY_FUND],
-          }),
-          publicClient.readContract({
-            address: DASH_STAKING,
-            abi: stakingABI,
-            functionName: 'totalStaked',
-          }),
-          publicClient.readContract({
-            address: DASH_STAKING,
-            abi: stakingABI,
-            functionName: 'totalRewardsDistributed',
-          }),
-        ]);
+        const hasIdrx =
+          !!VAULT_POOL_IDRX && !!STABILITY_FUND_IDRX && !!IDRX_TOKEN;
+
+        const [vaultAssets, bufferBalance, stakingTVL, stakingRewards, vaultAssetsIdrx, bufferIdrx] =
+          await Promise.all([
+            publicClient.readContract({
+              address: VAULT_POOL,
+              abi: vaultPoolABI,
+              functionName: 'totalAssets',
+            }),
+            publicClient.readContract({
+              address: USDC_TOKEN,
+              abi: erc20ABI,
+              functionName: 'balanceOf',
+              args: [STABILITY_FUND],
+            }),
+            publicClient.readContract({
+              address: DASH_STAKING,
+              abi: stakingABI,
+              functionName: 'totalStaked',
+            }),
+            publicClient.readContract({
+              address: DASH_STAKING,
+              abi: stakingABI,
+              functionName: 'totalRewardsDistributed',
+            }),
+            hasIdrx
+              ? publicClient.readContract({
+                  address: VAULT_POOL_IDRX,
+                  abi: vaultPoolABI,
+                  functionName: 'totalAssets',
+                })
+              : Promise.resolve(0n),
+            hasIdrx
+              ? publicClient.readContract({
+                  address: IDRX_TOKEN,
+                  abi: erc20ABI,
+                  functionName: 'balanceOf',
+                  args: [STABILITY_FUND_IDRX],
+                })
+              : Promise.resolve(0n),
+          ]);
 
         const stakingAPR = await publicClient
           .readContract({
@@ -132,12 +156,15 @@ export const usePoolData = (): PoolData => {
         const stakingValue = Number(formatUnits(stakingTVL as bigint, 18)); // assume $1 peg
         const vaultValue = Number(formatUnits(vaultAssets as bigint, 6));
         const bufferValue = Number(formatUnits(bufferBalance as bigint, 6));
-        const totalTVLValue = vaultValue + bufferValue + stakingValue;
+        const vaultIdrxValue = Number(formatUnits(vaultAssetsIdrx as bigint, 6)) / IDRX_PER_USD;
+        const bufferIdrxValue = Number(formatUnits(bufferIdrx as bigint, 6)) / IDRX_PER_USD;
+        const totalTVLValue =
+          vaultValue + bufferValue + vaultIdrxValue + bufferIdrxValue + stakingValue;
 
         setData({
           totalTVL: formatCurrency(totalTVLValue),
-          vaultTVL: formatCurrency(vaultValue),
-          stabilityBuffer: formatCurrency(bufferValue),
+          vaultTVL: formatCurrency(vaultValue + vaultIdrxValue),
+          stabilityBuffer: formatCurrency(bufferValue + bufferIdrxValue),
           stakingTVL: `${formatTokens(Number(formatUnits(stakingTVL as bigint, 18)))} DASH`,
           totalFeesCollected: formatCurrency(0),
           stakingAPR: `${(Number(stakingAPR) / 10000).toFixed(2)}%`,

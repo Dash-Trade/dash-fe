@@ -2,6 +2,7 @@ import React from 'react';
 import { Button } from '@/components/ui/button';
 import { formatPrice } from '../utils/formatUtils';
 import Image from 'next/image';
+import { ChevronDown } from 'lucide-react';
 
 interface CollateralInputProps {
   value: string;
@@ -13,6 +14,8 @@ interface CollateralInputProps {
   disabled?: boolean;
   tokenSymbol?: string;
   tokenIcon?: string;
+  tokenOptions?: { symbol: string; icon?: string }[];
+  onTokenChange?: (symbol: string) => void;
 }
 
 export const CollateralInput: React.FC<CollateralInputProps> = ({
@@ -25,6 +28,8 @@ export const CollateralInput: React.FC<CollateralInputProps> = ({
   disabled = false,
   tokenSymbol = 'USDC',
   tokenIcon = '/icons/usdc.png',
+  tokenOptions,
+  onTokenChange,
 }) => {
   const usdValue = value ? parseFloat(value) : 0;
 
@@ -57,7 +62,24 @@ export const CollateralInput: React.FC<CollateralInputProps> = ({
               target.style.display = 'none';
             }}
           />
-          <span className="font-medium text-text-primary">{tokenSymbol}</span>
+          {tokenOptions && onTokenChange ? (
+            <div className="relative">
+              <select
+                value={tokenSymbol}
+                onChange={(e) => onTokenChange(e.target.value)}
+                className="appearance-none bg-[#111827] border border-slate-700/70 text-sm font-semibold text-white rounded-md pl-2 pr-6 py-1.5 outline-none focus:border-blue-500/80 focus:ring-1 focus:ring-blue-500/40"
+              >
+                {tokenOptions.map((option) => (
+                  <option key={option.symbol} value={option.symbol}>
+                    {option.symbol}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+          ) : (
+            <span className="font-medium text-text-primary">{tokenSymbol}</span>
+          )}
         </div>
       </div>
 

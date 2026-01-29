@@ -18,6 +18,7 @@ const MobileHistoryCard = ({ item }: MobileHistoryCardProps) => {
 
   const isTap = item.type === 'TAP';
   const date = new Date(item.time * 1000);
+  const collateral = item.collateralToken || 'USDC';
 
   let resultDisplay = '-';
   let statusColor = 'text-gray-400';
@@ -33,7 +34,7 @@ const MobileHistoryCard = ({ item }: MobileHistoryCardProps) => {
     if (typeof item.collateral === 'string') amount = parseFloat(item.collateral) / 1000000;
     else if (typeof item.collateral === 'bigint') amount = Number(item.collateral) / 1000000;
     else if (typeof item.collateral === 'number') amount = item.collateral / 1000000;
-    betMarginDisplay = `$${amount.toFixed(2)}`;
+    betMarginDisplay = `${amount.toFixed(2)} ${collateral}`;
 
     if (item.status === 'EXECUTED' && item.executedTxHash) {
       resultDisplay = 'View Tx';
@@ -42,7 +43,7 @@ const MobileHistoryCard = ({ item }: MobileHistoryCardProps) => {
     let amount = 0;
     if (typeof item.betAmount === 'string') amount = parseFloat(item.betAmount);
     else if (typeof item.betAmount === 'number') amount = item.betAmount;
-    betMarginDisplay = `$${amount.toFixed(2)}`;
+    betMarginDisplay = `${amount.toFixed(2)} ${collateral}`;
 
     const entry = parseFloat(item.entryPrice) / 100000000;
     const target = parseFloat(item.targetPrice) / 100000000;
@@ -52,9 +53,9 @@ const MobileHistoryCard = ({ item }: MobileHistoryCardProps) => {
     if (item.status === 'WON') {
       const payout = amount * (mult / 100);
       const profit = payout - amount;
-      resultDisplay = `+$${profit.toFixed(2)} (${multDisplay}x)`;
+      resultDisplay = `+${profit.toFixed(2)} ${collateral} (${multDisplay}x)`;
     } else if (item.status === 'LOST') {
-      resultDisplay = `-$${amount.toFixed(2)}`;
+      resultDisplay = `-${amount.toFixed(2)} ${collateral}`;
     }
   }
 
@@ -95,6 +96,10 @@ const MobileHistoryCard = ({ item }: MobileHistoryCardProps) => {
         <div className="flex justify-between">
           <span className="text-gray-500">Margin/Bet</span>
           <span className="text-white font-medium">{betMarginDisplay}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-500">Collateral</span>
+          <span className="text-white font-medium">{collateral}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Result</span>

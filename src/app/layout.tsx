@@ -50,6 +50,7 @@ export async function generateMetadata(): Promise<Metadata> {
       type: 'website',
     },
     other: {
+      'base:app_id': '697b7e4e748a9bde7c61abf2',
       'fc:miniapp': JSON.stringify({
         version: 'next',
         imageUrl: miniapp.heroImageUrl,

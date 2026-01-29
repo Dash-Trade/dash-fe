@@ -279,7 +279,7 @@ export default function ScrollStack({ sections }: ScrollStackProps) {
               </h2>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full items-center" style={{ transform: 'translateY(48px)' }}>
+            <div className="relative w-full min-h-[400px] md:min-h-0 md:grid md:grid-cols-3 md:gap-8 items-center" style={{ transform: 'translateY(48px)' }}>
               {sections
                 .filter(section => !section.customRender)
                 .map((section, idx) => {
@@ -289,7 +289,7 @@ export default function ScrollStack({ sections }: ScrollStackProps) {
                       ref={(el) => {
                         cardsRef.current[idx] = el;
                       }}
-                      className="flex flex-col p-6 rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-gray-900/50 to-gray-800/30 backdrop-blur-sm"
+                      className="absolute inset-0 md:relative md:inset-auto flex flex-col p-6 rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-gray-900/50 to-gray-800/30 backdrop-blur-sm"
                       style={{
                         opacity: 0,
                       }}

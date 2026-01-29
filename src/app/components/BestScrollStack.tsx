@@ -103,19 +103,19 @@ export default function BestScrollStack({ sections }: BestScrollStackProps) {
             </h2>
           </div>
 
-          {/* Cards Grid - Horizontal Layout */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-0 w-full max-w-7xl relative">
+          {/* Cards Grid - Horizontal Layout on desktop, stacked on mobile */}
+          <div className="relative w-full max-w-7xl min-h-[500px] md:min-h-0 md:grid md:grid-cols-2 lg:grid-cols-4 md:gap-0">
             {/* Top Border Line - Full Width extending to screen edges */}
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 h-px bg-gray-600 w-screen"></div>
+            <div className="hidden md:block absolute top-0 left-1/2 -translate-x-1/2 h-px bg-gray-600 w-screen"></div>
             {/* Bottom Border Line - Full Width extending to screen edges */}
-            <div className="absolute bottom-0 left-1/2 -translate-x-1/2 h-px bg-gray-600 w-screen"></div>
+            <div className="hidden md:block absolute bottom-0 left-1/2 -translate-x-1/2 h-px bg-gray-600 w-screen"></div>
             {sections.map((section, idx) => (
               <div
                 key={idx}
                 ref={(el) => {
                   cardsRef.current[idx] = el;
                 }}
-                className="flex flex-col px-8 py-20 border border-gray-600 min-h-[600px] relative"
+                className="absolute inset-0 md:relative md:inset-auto flex flex-col px-8 py-20 border border-gray-600 min-h-[500px] md:min-h-[600px]"
                 style={{
                   opacity: 0,
                   backgroundColor: "#1a1a1a",

@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
-import { createPublicClient, http, formatUnits } from 'viem';
+import { createPublicClient, encodeFunctionData, http, formatUnits } from 'viem';
 import { baseSepolia } from 'wagmi/chains';
 import { IDRX_ADDRESS, USDC_ADDRESS, USDC_DECIMALS, isZeroAddress } from '@/config/contracts';
+import { useActivePrivyWallet } from '@/features/wallet/hooks/useActivePrivyWallet';
 
 export const useWalletBalance = () => {
   const { authenticated, user } = usePrivy();
+  const { activeWallet, address } = useActivePrivyWallet();
   const [usdcBalance, setUsdcBalance] = useState<string | null>(null);
   const [idrxBalance, setIdrxBalance] = useState<string | null>(null);
   const [isLoadingBalance, setIsLoadingBalance] = useState(false);
@@ -20,16 +22,12 @@ export const useWalletBalance = () => {
       ) as any[];
 
       const embeddedWalletAddress = embeddedWallets?.[0]?.address || user?.wallet?.address;
+      const walletAddress = address ?? embeddedWalletAddress;
 
-      if (!embeddedWalletAddress) return;
+      if (!walletAddress) return;
 
       setIsLoadingBalance(true);
       try {
-        const publicClient = createPublicClient({
-          chain: baseSepolia,
-          transport: http(),
-        });
-
         const balanceOfAbi = [
           {
             constant: true,
@@ -40,21 +38,58 @@ export const useWalletBalance = () => {
           },
         ] as const;
 
-        const [usdc, idrx] = await Promise.all([
-          publicClient.readContract({
-            address: USDC_ADDRESS,
-            abi: balanceOfAbi,
-            functionName: 'balanceOf',
-            args: [embeddedWalletAddress as `0x${string}`],
-          }) as Promise<bigint>,
-          isZeroAddress(IDRX_ADDRESS)
-            ? Promise.resolve(0n)
-            : (publicClient.readContract({
-                address: IDRX_ADDRESS,
+        const readBalance = async (tokenAddress: `0x${string}`) => {
+          const provider = await activeWallet?.getEthereumProvider();
+          if (provider) {
+            const callData = encodeFunctionData({
+              abi: balanceOfAbi,
+              functionName: 'balanceOf',
+              args: [walletAddress as `0x${string}`],
+            });
+            try {
+              const result = await provider.request({
+                method: 'eth_call',
+                params: [{ to: tokenAddress, data: callData }, 'latest'],
+              });
+              if (result && result !== '0x') {
+                return BigInt(result as string);
+              }
+              return 0n;
+            } catch {
+              // fallback to public RPC
+            }
+          }
+
+          const publicClient = createPublicClient({
+            chain: baseSepolia,
+            transport: http(process.env.NEXT_PUBLIC_RPC_URL || 'https://sepolia.base.org'),
+          });
+
+          const maxAttempts = 3;
+          let attempt = 0;
+          while (attempt < maxAttempts) {
+            try {
+              return (await publicClient.readContract({
+                address: tokenAddress,
                 abi: balanceOfAbi,
                 functionName: 'balanceOf',
-                args: [embeddedWalletAddress as `0x${string}`],
-              }) as Promise<bigint>),
+                args: [walletAddress as `0x${string}`],
+              })) as bigint;
+            } catch (error: any) {
+              if (error?.message?.includes('rate limit') || error?.message?.includes('429')) {
+                await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
+                attempt += 1;
+                continue;
+              }
+              throw error;
+            }
+          }
+          return 0n;
+        };
+
+        const [usdc, idrx] = await Promise.all([
+          readBalance(USDC_ADDRESS),
+          isZeroAddress(IDRX_ADDRESS) ? Promise.resolve(0n) : readBalance(IDRX_ADDRESS),
         ]);
 
         const formattedUsdc = formatUnits(usdc, USDC_DECIMALS);
@@ -72,7 +107,7 @@ export const useWalletBalance = () => {
     if (authenticated && user) {
       fetchBalances();
     }
-  }, [authenticated, user]);
+  }, [authenticated, user, activeWallet, address]);
 
   return { usdcBalance, idrxBalance, isLoadingBalance };
 };

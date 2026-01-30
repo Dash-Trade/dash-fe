@@ -17,6 +17,7 @@ interface TradeActionButtonsProps {
   hasLargeOneTapProfitAllowance: boolean;
   hasSelectedYGrid: boolean;
   activeWallet?: ConnectedWallet;
+  isActivationReady?: boolean;
 
   onPreApprove: () => Promise<void>;
   onPreApproveOneTapProfit: () => Promise<void>;
@@ -38,6 +39,7 @@ export const TradeActionButtons: React.FC<TradeActionButtonsProps> = ({
   hasLargeOneTapProfitAllowance,
   hasSelectedYGrid,
   activeWallet,
+  isActivationReady = true,
 
   onPreApprove,
   onPreApproveOneTapProfit,
@@ -47,6 +49,10 @@ export const TradeActionButtons: React.FC<TradeActionButtonsProps> = ({
   onMobileClose,
 }) => {
   const handleMainAction = async () => {
+    if (!isActivationReady) {
+      toast.error('Checking approval status. Please wait...');
+      return;
+    }
     if (tradeMode === 'open-position' && !hasLargeAllowance) {
       await onPreApprove();
     } else if (tradeMode === 'one-tap-profit' && !hasLargeOneTapProfitAllowance) {
@@ -169,7 +175,11 @@ export const TradeActionButtons: React.FC<TradeActionButtonsProps> = ({
   let variant: 'default' | 'secondary' | 'destructive' | 'outline' | 'ghost' | 'link' = 'default';
 
   if (tradeMode === 'open-position') {
-    if (!hasLargeAllowance) {
+    if (!isActivationReady) {
+      buttonText = 'Checking Approval...';
+      isLoading = true;
+      variant = 'default';
+    } else if (!hasLargeAllowance) {
       buttonText = isApprovalPending ? 'Approving Collateral...' : 'Activate Trading';
       isLoading = isApprovalPending;
       variant = 'default';
@@ -178,7 +188,10 @@ export const TradeActionButtons: React.FC<TradeActionButtonsProps> = ({
       isLoading = tapToTrade.isLoading;
     }
   } else {
-    if (!hasLargeOneTapProfitAllowance) {
+    if (!isActivationReady) {
+      buttonText = 'Checking Approval...';
+      isLoading = true;
+    } else if (!hasLargeOneTapProfitAllowance) {
       buttonText = isOneTapProfitApprovalPending
         ? 'Approving Collateral...'
         : 'Activate Trading';
@@ -194,7 +207,7 @@ export const TradeActionButtons: React.FC<TradeActionButtonsProps> = ({
       size="lg"
       className="w-full mt-2 font-bold shadow-lg shadow-primary/30"
       onClick={handleMainAction}
-      disabled={disabled || isLoading}
+      disabled={disabled || isLoading || !isActivationReady}
     >
       {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
       {buttonText}

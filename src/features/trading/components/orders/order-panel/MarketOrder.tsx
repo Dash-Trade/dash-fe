@@ -66,13 +66,16 @@ const MarketOrder: React.FC<MarketOrderProps> = ({ activeTab = 'long' }) => {
     hasGlobalAllowance,
     isApproving: isActivationPending,
     maxApproval,
+    minApproval,
+    isReady: isActivationReady,
   } = useGlobalTradingActivation();
   const { setTPSL } = useTPSL();
   const { positionIds, refetch: refetchPositions } = useUserPositions(collateralToken);
 
   const hasLargeAllowance = useMemo(() => {
-    return hasGlobalAllowance(maxApproval);
-  }, [hasGlobalAllowance, maxApproval]);
+    if (!isActivationReady) return false;
+    return hasGlobalAllowance(minApproval);
+  }, [hasGlobalAllowance, minApproval, isActivationReady]);
 
   const handleMarketSelect = (market: Market) => {
     setActiveMarket({ ...market, category: market.category || 'crypto' });
@@ -127,6 +130,11 @@ const MarketOrder: React.FC<MarketOrderProps> = ({ activeTab = 'long' }) => {
   const handleOpenPosition = async () => {
     if (!authenticated) {
       toast.error('Please connect your wallet');
+      return;
+    }
+
+    if (!isActivationReady) {
+      toast.error('Checking approval status. Please wait...');
       return;
     }
 
@@ -355,6 +363,7 @@ const MarketOrder: React.FC<MarketOrderProps> = ({ activeTab = 'long' }) => {
         isUSDCApprovalPending={isActivationPending}
         payAmount={payAmount}
         hasLargeAllowance={hasLargeAllowance}
+        isActivationReady={isActivationReady}
         onAction={handleOpenPosition}
       />
 

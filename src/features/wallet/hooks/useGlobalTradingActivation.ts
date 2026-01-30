@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSendTransaction } from '@privy-io/react-auth';
-import { createPublicClient, encodeFunctionData, http, parseUnits } from 'viem';
+import { createPublicClient, encodeFunctionData, http, parseUnits, maxUint256 } from 'viem';
 import { baseSepolia } from 'wagmi/chains';
 import {
   COLLATERAL_CONFIG,
@@ -35,7 +35,8 @@ const ERC20_ABI = [
 
 type AllowanceState = Partial<Record<CollateralToken, bigint>>;
 
-const MAX_APPROVAL = '1000000'; // 1,000,000 tokens (6 decimals)
+const MAX_APPROVAL = maxUint256;
+const MIN_APPROVAL = '1'; // 1 token (per decimals)
 
 export const useGlobalTradingActivation = () => {
   const { activeWallet, address } = useActivePrivyWallet();
@@ -44,7 +45,6 @@ export const useGlobalTradingActivation = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
-  const [activationOverride, setActivationOverride] = useState(false);
   const allowancesRef = useRef<AllowanceState>({});
 
   const embeddedWallet = activeWallet;
@@ -65,13 +65,6 @@ export const useGlobalTradingActivation = () => {
       return !isZeroAddress(config.address) && !isZeroAddress(config.stabilityFund);
     });
   }, []);
-
-  const cacheKey = activeAddress
-    ? `dash_allowances_${activeAddress.toLowerCase()}`
-    : null;
-  const overrideKey = activeAddress
-    ? `dash_trading_activated_${activeAddress.toLowerCase()}`
-    : null;
 
   const fetchAllowanceFor = useCallback(
     async (token: CollateralToken) => {
@@ -137,36 +130,11 @@ export const useGlobalTradingActivation = () => {
         }
       }
       setAllowances(next);
-      const allApproved = getValidTokens().every((token) => {
-        const config = COLLATERAL_CONFIG[token];
-        if (isZeroAddress(config.address) || isZeroAddress(config.stabilityFund)) return true;
-        const current = next[token] ?? 0n;
-        const required = parseUnits(MAX_APPROVAL, config.decimals);
-        return current >= required;
-      });
-      if (allApproved && overrideKey) {
-        setActivationOverride(true);
-        try {
-          localStorage.setItem(overrideKey, 'true');
-        } catch {
-          // ignore cache errors
-        }
-      }
-      if (cacheKey) {
-        try {
-          const serialized = Object.fromEntries(
-            Object.entries(next).map(([key, value]) => [key, value?.toString() ?? '0']),
-          );
-          localStorage.setItem(cacheKey, JSON.stringify(serialized));
-        } catch {
-          // ignore cache errors
-        }
-      }
       setIsInitialized(true);
     } finally {
       setIsLoading(false);
     }
-  }, [activeAddress, getValidTokens, fetchAllowanceFor, embeddedWallet, cacheKey, overrideKey]);
+  }, [activeAddress, getValidTokens, fetchAllowanceFor, embeddedWallet]);
 
   const waitForReceipt = useCallback(
     async (txHash: `0x${string}`) => {
@@ -191,7 +159,7 @@ export const useGlobalTradingActivation = () => {
   );
 
   const approveToken = useCallback(
-    async (token: CollateralToken, amount: string = MAX_APPROVAL) => {
+    async (token: CollateralToken, amount: bigint = MAX_APPROVAL) => {
       if (!embeddedWallet || !activeAddress) {
         throw new Error('Embedded wallet not connected');
       }
@@ -207,11 +175,10 @@ export const useGlobalTradingActivation = () => {
         throw new Error('Could not get wallet client');
       }
 
-      const amountBigInt = parseUnits(amount, config.decimals);
       const data = encodeFunctionData({
         abi: ERC20_ABI,
         functionName: 'approve',
-        args: [config.stabilityFund, amountBigInt],
+        args: [config.stabilityFund, amount],
       });
       const txResult = await sendTransaction(
         {
@@ -237,7 +204,7 @@ export const useGlobalTradingActivation = () => {
       await waitForReceipt(txHash);
 
       const latestAllowance = await fetchAllowanceFor(token);
-      const required = parseUnits(amount, config.decimals);
+      const required = amount;
       if (latestAllowance < required) {
         throw new Error(`Approval for ${token} not confirmed on-chain yet`);
       }
@@ -246,7 +213,7 @@ export const useGlobalTradingActivation = () => {
   );
 
   const approveAll = useCallback(
-    async (amount: string = MAX_APPROVAL) => {
+    async (amount: bigint = MAX_APPROVAL) => {
       const tokens = getValidTokens();
       if (tokens.length === 0) {
         return;
@@ -258,71 +225,37 @@ export const useGlobalTradingActivation = () => {
           await approveToken(token, amount);
         }
         await refetchAllowances();
-        if (overrideKey) {
-          setActivationOverride(true);
-          try {
-            localStorage.setItem(overrideKey, 'true');
-          } catch {
-            // ignore cache errors
-          }
-        }
       } finally {
         setIsApproving(false);
       }
     },
-    [approveToken, getValidTokens, refetchAllowances, overrideKey],
+    [approveToken, getValidTokens, refetchAllowances],
   );
 
   const hasAllowance = useCallback(
-    (token: CollateralToken, requiredAmount: string) => {
+    (token: CollateralToken, requiredAmount?: bigint) => {
       const config = COLLATERAL_CONFIG[token];
       if (isZeroAddress(config.address) || isZeroAddress(config.stabilityFund)) return true;
       const current = allowances[token] ?? 0n;
-      const required = parseUnits(requiredAmount, config.decimals);
+      const required = requiredAmount ?? parseUnits(MIN_APPROVAL, config.decimals);
       return current >= required;
     },
     [allowances],
   );
 
   const hasGlobalAllowance = useCallback(
-    (requiredAmount: string = MAX_APPROVAL) => {
-      if (activationOverride) return true;
+    (requiredAmount?: bigint) => {
       const tokens = getValidTokens();
       if (tokens.length === 0) return true;
       return tokens.every((token) => hasAllowance(token, requiredAmount));
     },
-    [activationOverride, getValidTokens, hasAllowance],
+    [getValidTokens, hasAllowance],
   );
 
   useEffect(() => {
     if (!activeAddress) return;
-    if (cacheKey) {
-      try {
-        const cached = localStorage.getItem(cacheKey);
-        if (cached) {
-          const parsed = JSON.parse(cached) as Record<string, string>;
-          const next: AllowanceState = {};
-          for (const [key, value] of Object.entries(parsed)) {
-            next[key as CollateralToken] = BigInt(value);
-          }
-          setAllowances(next);
-        }
-      } catch {
-        // ignore cache errors
-      }
-    }
-    if (overrideKey) {
-      try {
-        const cachedOverride = localStorage.getItem(overrideKey);
-        if (cachedOverride === 'true') {
-          setActivationOverride(true);
-        }
-      } catch {
-        // ignore cache errors
-      }
-    }
     refetchAllowances();
-  }, [activeAddress, refetchAllowances, cacheKey, overrideKey]);
+  }, [activeAddress, refetchAllowances]);
 
   useEffect(() => {
     allowancesRef.current = allowances;
@@ -333,12 +266,13 @@ export const useGlobalTradingActivation = () => {
     isLoading,
     isApproving,
     isInitialized,
-    activationOverride,
+    isReady: isInitialized && !!activeAddress,
     refetchAllowances,
     approveAll,
     approveToken,
     hasAllowance,
     hasGlobalAllowance,
     maxApproval: MAX_APPROVAL,
+    minApproval: parseUnits(MIN_APPROVAL, 6),
   };
 };

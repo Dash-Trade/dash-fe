@@ -25,6 +25,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
         appearance: {
           theme: 'dark',
           accentColor: '#676FFF',
+          walletList: ['base_account', 'detected_ethereum_wallets', 'wallet_connect'],
+          showWalletLoginFirst: true,
         },
         loginMethods: ['email', 'google', 'wallet'],
         embeddedWallets: {

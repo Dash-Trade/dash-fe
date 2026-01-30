@@ -18,10 +18,12 @@ import HistoryTab from '@/features/trading/components/orders/HistoryTab';
 import { useTapToTradeOrders } from '@/features/trading/hooks/useTapToTradeOrders';
 import { useUserPendingOrders } from '@/features/trading/hooks/useLimitOrder';
 import { useBinaryOrders } from '@/features/trading/hooks/useBinaryOrders';
+import { useEmbeddedWallet } from '@/features/wallet/hooks/useEmbeddedWallet';
 
 export default function BottomTrading() {
   const [openPositionsCount, setOpenPositionsCount] = useState(0);
   const { setSelectedPosition, selectedPosition, collateralToken } = useMarket();
+  const { address: embeddedAddress } = useEmbeddedWallet();
   const { positionRefs, isLoading: isLoadingIds, refetch: refetchPositions } =
     useAllUserPositions();
   const { closePosition, isPending: isClosing } = useGaslessClose();
@@ -57,6 +59,16 @@ export default function BottomTrading() {
     (positionId: bigint, token: string) => `${token}:${positionId.toString()}`,
     [],
   );
+
+  useEffect(() => {
+    setPositionStatuses(new Map());
+    setPositionSymbols(new Map());
+    setOpenPositionsCount(0);
+    setSelectedPosition(null);
+    setTpslModalOpen(false);
+    setTpslModalData(null);
+    refetchPositions?.();
+  }, [embeddedAddress, refetchPositions, setSelectedPosition]);
 
   // Update open positions count when statuses change
   useEffect(() => {

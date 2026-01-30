@@ -55,6 +55,8 @@ const TapToTrade: React.FC<TapToTradeProps> = ({ onMobileClose }) => {
     isApproving: isApprovalPending,
     maxApproval,
     refetchAllowances,
+    isReady: isActivationReady,
+    minApproval,
   } = useGlobalTradingActivation();
 
   // Tap to Trade dari Context
@@ -71,8 +73,9 @@ const TapToTrade: React.FC<TapToTradeProps> = ({ onMobileClose }) => {
 
   // Check if we have large allowance (> $10,000) - memoized to prevent setState during render
   const hasLargeAllowance = useMemo(() => {
-    return hasGlobalAllowance(maxApproval);
-  }, [hasGlobalAllowance, maxApproval]);
+    if (!isActivationReady) return false;
+    return hasGlobalAllowance(minApproval);
+  }, [hasGlobalAllowance, minApproval, isActivationReady]);
 
   const hasLargeOneTapProfitAllowance = hasLargeAllowance;
 
@@ -252,6 +255,7 @@ const TapToTrade: React.FC<TapToTradeProps> = ({ onMobileClose }) => {
         hasLargeOneTapProfitAllowance={hasLargeOneTapProfitAllowance}
         hasSelectedYGrid={hasSelectedYGrid}
         activeWallet={activeWallet}
+        isActivationReady={isActivationReady}
         onPreApprove={handlePreApprove}
         onPreApproveOneTapProfit={handlePreApproveOneTapProfit}
         isApprovalPending={isApprovalPending}

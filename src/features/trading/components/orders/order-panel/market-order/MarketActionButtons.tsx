@@ -11,6 +11,7 @@ interface MarketActionButtonsProps {
   isRelayPending: boolean;
   payAmount: string;
   hasLargeAllowance: boolean;
+  isActivationReady?: boolean;
   onAction: () => void;
 }
 
@@ -23,6 +24,7 @@ export const MarketActionButtons: React.FC<MarketActionButtonsProps> = ({
   isUSDCApprovalPending,
   payAmount,
   hasLargeAllowance,
+  isActivationReady = true,
   onAction,
 }) => {
   const getButtonText = () => {
@@ -32,6 +34,7 @@ export const MarketActionButtons: React.FC<MarketActionButtonsProps> = ({
     if (isDepositing) return 'Depositing to Paymaster...';
     if (isRelayPending) return 'Opening Position...';
     if (!payAmount || parseFloat(payAmount) <= 0) return 'Enter Amount';
+    if (!isActivationReady) return 'Checking Approval...';
 
     if ((activeTab === 'long' || activeTab === 'short') && !hasLargeAllowance) {
       return 'Activate Trading';
@@ -49,7 +52,8 @@ export const MarketActionButtons: React.FC<MarketActionButtonsProps> = ({
     isDepositing ||
     isUSDCApprovalPending ||
     !payAmount ||
-    parseFloat(payAmount) <= 0;
+    parseFloat(payAmount) <= 0 ||
+    !isActivationReady;
 
   // Variant mapping to shadcn button variants or custom classes
   // Assuming shadcn Button has variants: default, destructive, outline, secondary, ghost, link.

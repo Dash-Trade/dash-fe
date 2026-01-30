@@ -10,6 +10,7 @@ interface LimitActionButtonsProps {
   payAmount: string;
   limitPrice: string;
   hasLargeAllowance: boolean;
+  isActivationReady?: boolean;
   onAction: () => void;
 }
 
@@ -21,10 +22,16 @@ export const LimitActionButtons: React.FC<LimitActionButtonsProps> = ({
   payAmount,
   limitPrice,
   hasLargeAllowance,
+  isActivationReady = true,
   onAction,
 }) => {
   const isButtonDisabled =
-    !authenticated || !payAmount || !limitPrice || isProcessing || isUSDCApprovalPending;
+    !authenticated ||
+    !payAmount ||
+    !limitPrice ||
+    isProcessing ||
+    isUSDCApprovalPending ||
+    !isActivationReady;
 
   // Variant mapping
   const getButtonClass = () => {
@@ -43,6 +50,7 @@ export const LimitActionButtons: React.FC<LimitActionButtonsProps> = ({
     if (isProcessing) return 'Processing...';
     if (!payAmount) return 'Enter Amount';
     if (!limitPrice) return 'Enter Limit Price';
+    if (!isActivationReady) return 'Checking Approval...';
 
     if ((activeTab === 'long' || activeTab === 'short') && !hasLargeAllowance) {
       return 'Activate Trading';

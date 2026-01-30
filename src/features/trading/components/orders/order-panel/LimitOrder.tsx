@@ -49,11 +49,14 @@ const LimitOrder: React.FC<LimitOrderProps> = ({ activeTab = 'long' }) => {
     hasGlobalAllowance,
     isApproving: isActivationPending,
     maxApproval,
+    minApproval,
+    isReady: isActivationReady,
   } = useGlobalTradingActivation();
 
   const hasLargeAllowance = useMemo(() => {
-    return hasGlobalAllowance(maxApproval);
-  }, [hasGlobalAllowance, maxApproval]);
+    if (!isActivationReady) return false;
+    return hasGlobalAllowance(minApproval);
+  }, [hasGlobalAllowance, minApproval, isActivationReady]);
 
   const handleMarketSelect = (market: Market) => {
     setActiveMarket({ ...market, category: market.category || 'crypto' });
@@ -132,6 +135,10 @@ const LimitOrder: React.FC<LimitOrderProps> = ({ activeTab = 'long' }) => {
   }, [activeMarket]);
 
   const handleCreateOrder = async () => {
+    if (!isActivationReady) {
+      toast.error('Checking approval status. Please wait...');
+      return;
+    }
     const needsActivation = (activeTab === 'long' || activeTab === 'short') && !hasLargeAllowance;
 
     if (needsActivation) {
@@ -263,6 +270,7 @@ const LimitOrder: React.FC<LimitOrderProps> = ({ activeTab = 'long' }) => {
         payAmount={payAmount}
         limitPrice={limitPrice}
         hasLargeAllowance={hasLargeAllowance}
+        isActivationReady={isActivationReady}
         onAction={handleCreateOrder}
       />
     </div>

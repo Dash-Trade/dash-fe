@@ -33,6 +33,9 @@ export function useLimitOrderSubmit(collateralToken: CollateralToken = 'USDC') {
     hasGlobalAllowance,
     isApproving: isApproving,
     maxApproval,
+    minApproval,
+    isReady,
+    refetchAllowances,
   } = useGlobalTradingActivation();
 
   const submitLimitOrder = async (params: {
@@ -73,7 +76,15 @@ export function useLimitOrderSubmit(collateralToken: CollateralToken = 'USDC') {
       }
 
       // 3. Check and approve USDC if needed (UNLIMITED APPROVAL - once only!)
-      if (!hasGlobalAllowance(maxApproval)) {
+      if (!isReady && refetchAllowances) {
+        await refetchAllowances();
+      }
+      if (!isReady) {
+        toast.error('Checking approval status. Please wait...');
+        return false;
+      }
+
+      if (!hasGlobalAllowance(minApproval)) {
         toast.loading('Approving collateral (one-time only)...', {
           id: 'limit-order-approve',
         });

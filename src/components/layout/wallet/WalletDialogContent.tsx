@@ -153,7 +153,7 @@ export const WalletDialogContent: React.FC = () => {
             onClick={handleClaimUSDC}
             disabled={isClaiming}
             className="py-3 px-4 bg-green-600 hover:bg-green-700 disabled:bg-green-800 disabled:cursor-not-allowed rounded-xl text-white font-medium transition-colors cursor-pointer flex items-center justify-center gap-2"
-            title="Claim 1,000 USDC + 1,000,000 IDRX"
+            title="Claim 10 USDC + 100,000 IDRX"
           >
             <DollarSign className="w-4 h-4" />
             {isClaiming ? 'Claiming...' : 'Claim'}

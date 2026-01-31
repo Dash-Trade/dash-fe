@@ -124,7 +124,7 @@ export const COLLATERAL_CONFIG: Record<
     tapToTradeExecutor: TAP_TO_TRADE_EXECUTOR_IDRX_ADDRESS,
     oneTapProfit: ONE_TAP_PROFIT_IDRX_ADDRESS,
     decimals: COLLATERAL_DECIMALS,
-    icon: '/icons/idrx.png',
+    icon: '/icons/idrx.svg',
   },
 };
 

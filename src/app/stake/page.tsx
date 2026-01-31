@@ -296,7 +296,7 @@ export default function StakePage() {
             }`}
           >
             <Image
-              src="/icons/idrx.png"
+              src="/icons/idrx.svg"
               alt="IDRX"
               width={20}
               height={20}

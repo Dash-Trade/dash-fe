@@ -211,7 +211,7 @@ const VAULTS_BASE: VaultConfig[] = [
   {
     token: 'IDRX',
     name: 'IDRX',
-    icon: '/icons/idrx.png',
+    icon: '/icons/idrx.svg',
     tokenAddress: IDRX_ADDRESS,
     vaultAddress: VAULT_POOL_IDRX_ADDRESS,
     stabilityFundAddress: STABILITY_FUND_IDRX_ADDRESS,
